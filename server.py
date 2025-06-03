@@ -53,36 +53,6 @@ class DESIMCPServer:
     survey data through the SPARCL (SPectra Analysis & Retrievable Catalog Lab) interface.
     DESI is a major astronomical survey that has observed millions of galaxies, quasars, and stars
     to create the largest 3D map of the universe.
-    
-    Key Features:
-    - Search for astronomical objects by sky coordinates (RA/Dec) with configurable radius
-    - Retrieve full spectral data for specific objects using SPARCL IDs
-    - Filter objects by type (galaxy, quasar, star) with optional redshift/magnitude constraints
-    - Query rectangular sky regions for bulk data access
-    - Access to both DESI Early Data Release (EDR) and Data Release 1 (DR1)
-    
-    Data Coverage:
-    - ~1.8 million spectra in DESI EDR
-    - ~18+ million spectra in DESI DR1  
-    - Spectral resolution R ~ 2000-5500 across blue, red, NIR arms
-    - Wavelength coverage: 360-980 nm
-    - Sky coverage: ~14,000 square degrees
-    
-    Technical Details:
-    - Uses SPARCL client for direct access to NOIRLab's data services
-    - All coordinates in decimal degrees (J2000 epoch)
-    - Redshift measurements include quality flags (zwarn)
-    - Spectral classifications: GALAXY, QSO, STAR, etc.
-    
-    Attributes:
-        sparcl_client (SparclClient): The SPARCL client instance for data access.
-                                     None if SPARCL is unavailable.
-    
-    Example Usage:
-        # The server automatically handles tool calls like:
-        # find_spectra_by_coordinates(ra=10.68, dec=41.27, radius=0.1)
-        # search_by_object_type("galaxy", redshift_min=0.5, redshift_max=1.0)
-        # get_spectrum_by_id("13210eb6-9d36-11ee-93d7-525400ad1336")
     """
     def __init__(self):
         """
@@ -91,25 +61,6 @@ class DESIMCPServer:
         Attempts to create a connection to the SPARCL service for accessing DESI data.
         The initialization will gracefully handle cases where the SPARCL client is
         unavailable due to network issues, missing dependencies, or service outages.
-        
-        Initialization Process:
-        1. Check if sparclclient package is available (SPARCL_AVAILABLE flag)
-        2. If available, attempt to create SparclClient instance
-        3. Log success/failure and store client reference
-        4. Server remains functional even if SPARCL initialization fails
-        
-        Side Effects:
-        - Sets self.sparcl_client to SparclClient instance or None
-        - Logs initialization status messages
-        - Does not raise exceptions on failure (graceful degradation)
-        
-        Post-Initialization State:
-        - If successful: self.sparcl_client contains working SPARCL connection
-        - If failed: self.sparcl_client is None, tool calls will return helpful errors
-        
-        Dependencies:
-        - Requires 'sparclclient' package installed via: pip install sparclclient
-        - Requires internet connection to SPARCL services at NOIRLab
         """
         self.sparcl_client = None
         
@@ -249,7 +200,7 @@ SPARCL (SPectra Analysis & Retrievable Catalog Lab)
 - Maintained by NOIRLab
 
 Available Tools:
-1. find_spectra_by_coordinates - Search by sky position
+1. find_object_by_coordinates - Search by sky position
 2. get_spectrum_by_id - Retrieve specific spectrum
 3. search_by_object_type - Find galaxies, quasars, or stars
 4. search_in_region - Query rectangular sky areas
@@ -291,44 +242,10 @@ async def handle_list_tools() -> list[types.Tool]:
     and retrieve DESI astronomical data through the SPARCL interface. Each tool
     includes a complete JSON schema for parameter validation.
     
-    Available Tools:
-    
-    1. "find_spectra_by_coordinates"
-       - Two modes based on radius parameter:
-         * No radius: finds the nearest single object to coordinates
-         * With radius: finds all objects within circular search region  
-       - Calculates angular separations for distance measurements
-       - Validates coordinate ranges and search parameters
-       - Returns objects with full metadata and SPARCL IDs
-    
-    2. "get_spectrum_by_id" - Retrieve detailed information and full spectral data for a specific DESI spectrum using its unique SPARCL identifier. Returns comprehensive object information including spectroscopic redshift, measurement quality flags, precise coordinates, survey program details, and data release version. With format='full', returns structured JSON data with complete spectral arrays (wavelength, flux, model, etc.) for analysis and visualization. The SPARCL ID is typically obtained from previous search results.
-    
-    3. "search_by_object_type" - Search for DESI objects filtered by their spectroscopic classification (galaxy, quasar, or star) with optional redshift and magnitude constraints. Spectroscopic types are determined by automated pipelines analyzing the observed spectra. Supports building scientifically useful samples with precise selection criteria. Redshift constraints use spectroscopic redshifts (not photometric estimates). Magnitude constraints typically refer to r-band apparent magnitudes. Essential for statistical studies, rare object searches, and building clean samples for analysis.
-    
-    4. "search_in_region" - Query all DESI objects within a rectangular sky region defined by RA/Dec boundaries. Performs a box search returning all observed objects in the specified area. Useful for large-scale structure studies, mapping specific fields, bulk data access, and creating complete samples in well-defined sky regions. The rectangular boundaries should account for coordinate wrap-around at RA=0°/360° if needed. Results include the full range of object types and redshifts observed in the region.
-    
-    Returns:
-        list[types.Tool]: Complete tool definitions with JSON schemas including:
-            - name: Unique tool identifier for calling
-            - description: Human-readable explanation of tool purpose  
-            - inputSchema: JSON schema defining required/optional parameters
-                          with types, ranges, defaults, and descriptions
-    
-    Technical Notes:
-        - All tools require SPARCL client to be available and initialized
-        - Coordinate parameters are in decimal degrees (J2000 epoch)
-        - Redshift constraints apply to spectroscopic redshifts (not photometric)
-        - Magnitude constraints are typically r-band magnitudes
-        - Max results limits prevent excessively large query responses
-        - SPARCL IDs are persistent UUIDs for individual spectra
-    
-    Error Handling:
-        If SPARCL is unavailable, tools will return helpful error messages
-        rather than failing silently. Check data_availability resource for status.
     """
     return [
         types.Tool(
-            name="find_spectra_by_coordinates",
+            name="find_object_by_coordinates",
             description="Search for DESI astronomical objects by sky coordinates. Two modes: (1) No radius specified - finds the nearest single object to the given coordinates with angular separation. (2) Radius specified - finds all objects within the circular search region. Returns objects with spectroscopic redshifts, object types, precise coordinates, and SPARCL IDs for detailed retrieval.",
             inputSchema={
                 "type": "object",
@@ -479,33 +396,6 @@ def format_search_results(found, show_limit=10):
                * SPARCL UUID for detailed retrieval
              - Summary line for remaining objects if count exceeds show_limit
     
-    Field Mapping:
-        The function attempts to extract data using proper SPARCL dot notation
-        and fallbacks for missing fields:
-        
-        - Object type: getattr(record, 'spectype', 'Unknown')
-        - Redshift: getattr(record, 'redshift', 'N/A')
-        - RA: getattr(record, 'ra', 'N/A')
-        - Dec: getattr(record, 'dec', 'N/A')
-        - ID: getattr(record, 'sparcl_id', 'N/A')
-    
-    Error Handling:
-        - Returns descriptive message if no results found
-        - Uses 'Unknown' or 'N/A' for missing fields
-        - Handles cases where found object lacks 'records' attribute
-        - Graceful formatting even with incomplete data
-    
-    Example Output:
-        "Found 3 objects:
-        
-         1. GALAXY at z=0.1234 (10.6789, 41.2345) [ID: 13210eb6-9d36...]
-         2. QSO at z=2.5678 (10.6790, 41.2346) [ID: 24321fc7-8e47...]
-         3. STAR at z=0.0012 (10.6791, 41.2347) [ID: 35432gd8-7f58...]"
-    
-    Usage:
-        Primarily used internally by tool functions to format search results
-        before returning them to MCP clients. Not typically called directly
-        by external code.
     """
     if not hasattr(found, 'records') or not found.records:
         return "No objects found matching the search criteria."
@@ -563,7 +453,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
     
     Supported Tools:
     
-    1. "find_spectra_by_coordinates"
+    1. "find_object_by_coordinates"
        - Two modes based on radius parameter:
          * No radius: finds the nearest single object to coordinates
          * With radius: finds all objects within circular search region  
@@ -633,11 +523,11 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
     
     Example Usage:
         # Coordinate search - nearest object mode
-        result = await call_tool("find_spectra_by_coordinates", 
+        result = await call_tool("find_object_by_coordinates", 
                                 {"ra": 10.68, "dec": 41.27})
         
         # Coordinate search - radius mode  
-        result = await call_tool("find_spectra_by_coordinates", 
+        result = await call_tool("find_object_by_coordinates", 
                                 {"ra": 10.68, "dec": 41.27, "radius": 0.1})
         
         # Object type search  
@@ -663,7 +553,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
         )]
     
     try:
-        if name == "find_spectra_by_coordinates":
+        if name == "find_object_by_coordinates":
             ra = arguments["ra"]
             dec = arguments["dec"]
             radius = arguments.get("radius")  # No default - behavior depends on whether provided
@@ -1061,88 +951,6 @@ async def main():
     data access. It sets up stdio-based communication for integration with MCP clients
     like Claude Desktop, Cline, or custom applications. The server runs indefinitely
     until interrupted or the client disconnects.
-    
-    Server Configuration:
-    - Server Name: "desi-basic" (identifier for MCP clients)
-    - Version: "0.1.0" (semantic versioning)
-    - Transport: stdio (standard input/output streams)
-    - Protocol: Model Context Protocol (MCP)
-    
-    Initialization Process:
-    1. Creates stdio communication streams for MCP protocol
-    2. Configures server capabilities and notification options  
-    3. Initializes server with proper MCP handshake
-    4. Starts main server event loop
-    5. Handles client connections and tool calls
-    
-    Server Capabilities:
-    - Resources: Documentation and status endpoints
-    - Tools: 4 DESI data access tools with full parameter schemas
-    - Notifications: Standard MCP notification support
-    - Experimental: No experimental features enabled
-    
-    Runtime Behavior:
-    - Runs continuously until process termination
-    - Handles multiple concurrent tool calls
-    - Maintains SPARCL client connection throughout session
-    - Provides detailed logging of operations and errors
-    - Gracefully handles client disconnections
-    
-    Integration:
-    The server is designed to integrate with MCP-compatible clients:
-    
-    1. Claude Desktop: Add to config file for chat integration
-    2. Cline VSCode Extension: Configure as MCP server
-    3. Custom Applications: Connect via stdio protocol
-    4. Command Line: Direct python execution for testing
-    
-    Error Handling:
-    - Logs startup and connection issues
-    - Continues running even if SPARCL initialization fails
-    - Provides meaningful error responses to clients
-    - Handles network interruptions gracefully
-    
-    Example Usage:
-    
-    Command Line:
-        python server.py
-        
-    Claude Desktop Config:
-        {
-          "mcpServers": {
-            "desi": {
-              "command": "python",
-              "args": ["/path/to/server.py"]
-            }
-          }
-        }
-    
-    Cline Integration:
-        Configure as MCP server in extension settings
-        
-    Dependencies:
-    - Requires asyncio for async/await support
-    - Uses mcp.server.stdio for MCP protocol implementation
-    - Needs working Python environment with all dependencies
-    - Optional: SPARCL client for data access functionality
-    
-    Logging:
-    Server operations are logged to help with debugging:
-    - Startup messages and initialization status
-    - Tool call requests and responses
-    - Error conditions and SPARCL connectivity issues
-    - Client connection/disconnection events
-    
-    Performance:
-    - Lightweight server with minimal resource usage
-    - SPARCL queries may take several seconds for large searches
-    - Memory usage scales with result set sizes
-    - No persistent state between tool calls
-    
-    Shutdown:
-    - Graceful shutdown on SIGINT (Ctrl+C)
-    - Cleanup of SPARCL client connections
-    - Proper MCP protocol termination
     """
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
         await server.run(
