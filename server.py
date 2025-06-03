@@ -295,7 +295,7 @@ async def handle_list_tools() -> list[types.Tool]:
     
     1. "find_spectra_by_coordinates" - Search for DESI astronomical objects within a circular region around given sky coordinates. Performs a cone search using RA/Dec coordinates with configurable radius. Returns objects with their spectroscopic redshifts, object types (galaxy/quasar/star), precise coordinates, and SPARCL IDs for detailed retrieval. Useful for finding objects near known sources, cross-matching with other catalogs, or exploring specific sky regions. Search radius should typically be 0.01-1.0 degrees depending on desired density.
     
-    2. "get_spectrum_by_id" - Retrieve detailed information and metadata for a specific DESI spectrum using its unique SPARCL identifier. Returns comprehensive object information including spectroscopic redshift, measurement quality flags, precise coordinates, survey program details, and data release version. The SPARCL ID is typically obtained from previous search results. Currently returns formatted summary; future versions may include full wavelength and flux arrays for spectral analysis.
+    2. "get_spectrum_by_id" - Retrieve detailed information and full spectral data for a specific DESI spectrum using its unique SPARCL identifier. Returns comprehensive object information including spectroscopic redshift, measurement quality flags, precise coordinates, survey program details, and data release version. With format='full', returns structured JSON data containing wavelength and flux arrays that can be used for analysis and visualization. The SPARCL ID is typically obtained from previous search results.
     
     3. "search_by_object_type" - Search for DESI objects filtered by their spectroscopic classification (galaxy, quasar, or star) with optional redshift and magnitude constraints. Spectroscopic types are determined by automated pipelines analyzing the observed spectra. Supports building scientifically useful samples with precise selection criteria. Redshift constraints use spectroscopic redshifts (not photometric estimates). Magnitude constraints typically refer to r-band apparent magnitudes. Essential for statistical studies, rare object searches, and building clean samples for analysis.
     
@@ -351,7 +351,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="get_spectrum_by_id",
-            description="Retrieve detailed information and metadata for a specific DESI spectrum using its unique SPARCL identifier. Returns comprehensive object information including spectroscopic redshift, measurement quality flags, precise coordinates, survey program details, and data release version. The SPARCL ID is typically obtained from previous search results. Currently returns formatted summary; future versions may include full wavelength and flux arrays for spectral analysis.",
+            description="Retrieve detailed information and full spectral data for a specific DESI spectrum using its unique SPARCL identifier. Returns comprehensive object information including spectroscopic redshift, measurement quality flags, precise coordinates, survey program details, and data release version. With format='full', returns structured JSON data containing wavelength and flux arrays that can be used for analysis and visualization. The SPARCL ID is typically obtained from previous search results.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -361,8 +361,8 @@ async def handle_list_tools() -> list[types.Tool]:
                     },
                     "format": {
                         "type": "string",
-                        "description": "Format for returned data. Currently only 'summary' is supported, returning formatted metadata including object type, redshift, coordinates, and survey information. Future: 'full' may return spectral arrays.",
-                        "enum": ["summary"],
+                        "description": "Format for returned data. 'summary': formatted metadata including object type, redshift, coordinates, and survey information. 'full': structured JSON data with complete spectral arrays (wavelength, flux, model, etc.) for analysis and visualization.",
+                        "enum": ["summary", "full"],
                         "default": "summary"
                     }
                 },
@@ -474,14 +474,14 @@ def format_search_results(found, show_limit=10):
              - Summary line for remaining objects if count exceeds show_limit
     
     Field Mapping:
-        The function attempts to extract data using multiple possible field names
-        to handle variations across SPARCL data releases:
+        The function attempts to extract data using proper SPARCL dot notation
+        and fallbacks for missing fields:
         
-        - Object type: 'spectype', 'SPECTYPE', 'spec_type', 'type'
-        - Redshift: 'redshift', 'z', 'Z', 'REDSHIFT'  
-        - RA: 'ra', 'RA', 'target_ra'
-        - Dec: 'dec', 'DEC', 'target_dec'
-        - ID: 'sparcl_id', 'specid', 'uuid'
+        - Object type: getattr(record, 'spectype', 'Unknown')
+        - Redshift: getattr(record, 'redshift', 'N/A')
+        - RA: getattr(record, 'ra', 'N/A')
+        - Dec: getattr(record, 'dec', 'N/A')
+        - ID: getattr(record, 'sparcl_id', 'N/A')
     
     Error Handling:
         - Returns descriptive message if no results found
@@ -507,45 +507,49 @@ def format_search_results(found, show_limit=10):
     summary = f"Found {len(found.records)} objects:\n\n"
     
     for i, record in enumerate(found.records[:show_limit]):
-        # Try different possible field names
-        obj_type = (record.get('spectype') or 
-                   record.get('SPECTYPE') or 
-                   record.get('spec_type') or 
-                   record.get('type') or 
-                   'Unknown')
-        
-        redshift = (record.get('redshift') or 
-                   record.get('z') or 
-                   record.get('Z') or 
-                   record.get('REDSHIFT') or 
-                   'N/A')
-        
-        ra = (record.get('ra') or 
-              record.get('RA') or 
-              record.get('target_ra') or 
-              'N/A')
-        
-        dec = (record.get('dec') or 
-               record.get('DEC') or 
-               record.get('target_dec') or 
-               'N/A')
-        
-        sparcl_id = (record.get('sparcl_id') or 
-                    record.get('specid') or 
-                    record.get('uuid') or 
-                    'N/A')
+        # Use proper SPARCL field access with getattr
+        obj_type = getattr(record, 'spectype', 'Unknown')
+        redshift = getattr(record, 'redshift', 'N/A')
+        ra = getattr(record, 'ra', 'N/A')
+        dec = getattr(record, 'dec', 'N/A')
+        sparcl_id = getattr(record, 'sparcl_id', 'N/A')
         
         summary += f"{i+1:2d}. {obj_type} at z={redshift}"
         if ra != 'N/A' and dec != 'N/A':
             summary += f" ({ra:.4f}, {dec:.4f})"
         if sparcl_id != 'N/A':
-            summary += f" [ID: {sparcl_id}]"
+            # Show only first few chars of UUID for readability
+            short_id = str(sparcl_id)[:8] + "..." if len(str(sparcl_id)) > 8 else str(sparcl_id)
+            summary += f" [ID: {short_id}]"
         summary += "\n"
     
     if len(found.records) > show_limit:
         summary += f"\n... and {len(found.records) - show_limit} more objects"
     
+    # Add note about retrieving detailed spectra using the .ids property
+    if hasattr(found, 'ids') and found.ids:
+        first_id = found.ids[0] if found.ids else 'N/A'
+        summary += f"\n\nFirst SPARCL ID for detailed retrieval: {first_id}"
+        summary += f"\nTotal IDs available: {len(found.ids) if found.ids else 0}"
+    
     return summary
+
+def get_first_spectrum_id(found):
+    """
+    Extract the first valid SPARCL ID from search results using the .ids property.
+    
+    This helper function properly accesses SPARCL IDs from search results using
+    the .ids property, which is the correct way according to SPARCL examples.
+    
+    Args:
+        found: SPARCL search result object from client.find()
+    
+    Returns:
+        str or None: First SPARCL ID if available, None otherwise
+    """
+    if hasattr(found, 'ids') and found.ids:
+        return found.ids[0]
+    return None
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextContent]:
@@ -658,43 +662,244 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
             radius = arguments.get("radius", 0.01)  # Default 0.01 degrees
             max_results = arguments.get("max_results", 100)
             
-            # Use constraints for SPARCL coordinate search
+            # Use constraints for SPARCL coordinate search with proper range format
             constraints = {
                 'ra': [ra - radius, ra + radius],
                 'dec': [dec - radius, dec + radius]
             }
             found = desi_server.sparcl_client.find(
                 constraints=constraints,
-                outfields=['sparcl_id', 'ra', 'dec', 'redshift', 'spectype', 'survey', 'program']
+                outfields=['sparcl_id', 'ra', 'dec', 'redshift', 'spectype', 'survey', 'data_release'],
+                limit=max_results
             )
+            
+            # Create detailed response with search results and retrieval info
+            search_summary = format_search_results(found, min(max_results, 10))
+            
+            # Add information about how to get detailed spectra
+            response_text = f"SPARCL coordinate search results:\n{search_summary}"
+            
+            if hasattr(found, 'ids') and found.ids:
+                first_id = found.ids[0]
+                response_text += f"\n\nTo get detailed spectrum information, use get_spectrum_by_id with:"
+                response_text += f"\n  - First object ID: {first_id}"
+                response_text += f"\n  - Available IDs: {len(found.ids)} total"
+                response_text += f"\n\nExample: get_spectrum_by_id('{first_id}')"
+            
             return [types.TextContent(
                 type="text",
-                text=f"SPARCL search results:\n{format_search_results(found, max_results)}"
+                text=response_text
             )]
 
         elif name == "get_spectrum_by_id":
             sparcl_id = arguments["sparcl_id"]
             format_type = arguments.get("format", "summary")
             
-            spectrum = desi_server.sparcl_client.retrieve(uuid=sparcl_id)
+            # Use correct SPARCL retrieve syntax with uuid_list and include parameters
+            if format_type == "full":
+                # Include spectral arrays for full format
+                include_fields = ['sparcl_id', 'specid', 'data_release', 'redshift', 'spectype', 
+                                'ra', 'dec', 'redshift_warning', 'survey', 'targetid', 'redshift_err',
+                                'flux', 'wavelength', 'model', 'ivar', 'mask']
+            else:
+                # Just metadata for summary
+                include_fields = ['sparcl_id', 'specid', 'data_release', 'redshift', 'spectype', 
+                                'ra', 'dec', 'redshift_warning', 'survey', 'targetid', 'redshift_err']
+            
+            results = desi_server.sparcl_client.retrieve(
+                uuid_list=[sparcl_id], 
+                include=include_fields
+            )
+            
+            if not results.records:
+                return [types.TextContent(
+                    type="text", 
+                    text=f"No spectrum found with ID: {sparcl_id}"
+                )]
+            
+            # Access the first (and only) record
+            spectrum = results.records[0]
             
             if format_type == "summary":
                 summary = f"""
 Spectrum Summary for ID: {sparcl_id}
 =====================================
-Object Type: {spectrum.get('spectype', 'Unknown')}
-Redshift: {spectrum.get('redshift', 'N/A')}
-Redshift Warning: {spectrum.get('redshift_warning', 'N/A')}
-Coordinates: ({spectrum.get('ra', 'N/A')}, {spectrum.get('dec', 'N/A')})
-Survey Program: {spectrum.get('survey', 'N/A')}
-Data Release: {spectrum.get('data_release', 'N/A')}
-Target ID: {spectrum.get('targetid', 'N/A')}
+Object Type: {getattr(spectrum, 'spectype', 'Unknown')}
+Redshift: {getattr(spectrum, 'redshift', 'N/A')}
+Redshift Error: {getattr(spectrum, 'redshift_err', 'N/A')}
+Redshift Warning: {getattr(spectrum, 'redshift_warning', 'N/A')}
+Coordinates: ({getattr(spectrum, 'ra', 'N/A')}, {getattr(spectrum, 'dec', 'N/A')})
+Survey Program: {getattr(spectrum, 'survey', 'N/A')}
+Data Release: {getattr(spectrum, 'data_release', 'N/A')}
+Spec ID: {getattr(spectrum, 'specid', 'N/A')}
+Target ID: {getattr(spectrum, 'targetid', 'N/A')}
+
+To get full spectrum data (flux, wavelength arrays), use format='full'
                 """
                 return [types.TextContent(type="text", text=summary)]
+            
+            elif format_type == "full":
+                # Get spectral arrays
+                wavelength = getattr(spectrum, 'wavelength', None)
+                flux = getattr(spectrum, 'flux', None)
+                model = getattr(spectrum, 'model', None)
+                ivar = getattr(spectrum, 'ivar', None)
+                
+                if wavelength is None or flux is None:
+                    return [types.TextContent(
+                        type="text", 
+                        text=f"Full spectrum data not available for ID: {sparcl_id}"
+                    )]
+                
+                # Create filenames
+                obj_type = getattr(spectrum, 'spectype', 'UNKNOWN')
+                redshift = getattr(spectrum, 'redshift', 0.0)
+                base_name = f"spectrum_{obj_type}_{redshift:.4f}_{sparcl_id[:8]}"
+                
+                txt_filename = f"{base_name}.txt"
+                json_filename = f"{base_name}.json"
+                
+                # Prepare metadata (no large arrays)
+                metadata = {
+                    "sparcl_id": sparcl_id,
+                    "object_type": getattr(spectrum, 'spectype', 'Unknown'),
+                    "redshift": float(getattr(spectrum, 'redshift', 0.0)),
+                    "redshift_err": float(getattr(spectrum, 'redshift_err', 0.0)) if getattr(spectrum, 'redshift_err', None) is not None else None,
+                    "redshift_warning": int(getattr(spectrum, 'redshift_warning', 0)) if getattr(spectrum, 'redshift_warning', None) is not None else None,
+                    "ra": float(getattr(spectrum, 'ra', 0.0)) if getattr(spectrum, 'ra', None) is not None else None,
+                    "dec": float(getattr(spectrum, 'dec', 0.0)) if getattr(spectrum, 'dec', None) is not None else None,
+                    "survey": getattr(spectrum, 'survey', None),
+                    "data_release": getattr(spectrum, 'data_release', None),
+                    "specid": str(getattr(spectrum, 'specid', None)) if getattr(spectrum, 'specid', None) is not None else None,
+                    "targetid": str(getattr(spectrum, 'targetid', None)) if getattr(spectrum, 'targetid', None) is not None else None
+                }
+                
+                # Prepare data info (no large arrays)
+                data_info = {
+                    "wavelength_unit": "Angstrom",
+                    "flux_unit": "10^-17 erg/s/cm²/Å",
+                    "num_pixels": len(wavelength) if wavelength is not None else 0,
+                    "wavelength_range": [float(wavelength.min()), float(wavelength.max())] if wavelength is not None else None,
+                    "has_model": model is not None,
+                    "has_inverse_variance": ivar is not None,
+                    "data_files": {
+                        "txt_file": txt_filename,
+                        "json_file": json_filename
+                    }
+                }
+                
+                # Save files
+                files_saved = []
+                try:
+                    import numpy as np
+                    
+                    # Save as structured JSON file for easy reading by Claude
+                    spectrum_data_for_file = {
+                        "metadata": metadata,
+                        "data": {
+                            "wavelength": wavelength.tolist(),
+                            "flux": flux.tolist(),
+                            "model": model.tolist() if model is not None else None,
+                            "inverse_variance": ivar.tolist() if ivar is not None else None
+                        }
+                    }
+                    
+                    with open(json_filename, 'w') as f:
+                        json.dump(spectrum_data_for_file, f, indent=2)
+                    files_saved.append(json_filename)
+                    
+                    # Save as text file for compatibility
+                    data_columns = [wavelength, flux]
+                    column_names = ['wavelength_angstrom', 'flux_1e-17_erg_s_cm2_A']
+                    
+                    if model is not None:
+                        data_columns.append(model)
+                        column_names.append('model_1e-17_erg_s_cm2_A')
+                    
+                    if ivar is not None:
+                        data_columns.append(ivar)
+                        column_names.append('inverse_variance')
+                    
+                    header = f"# DESI spectrum for {obj_type} at z={redshift}\n"
+                    header += f"# SPARCL ID: {sparcl_id}\n"
+                    header += f"# Columns: {' '.join(column_names)}\n"
+                    
+                    data_array = np.column_stack(data_columns)
+                    np.savetxt(txt_filename, data_array, header=header, 
+                              fmt='%.6f', delimiter='    ')
+                    files_saved.append(txt_filename)
+                    
+                except Exception as e:
+                    return [types.TextContent(
+                        type="text", 
+                        text=f"Error saving spectrum data: {e}"
+                    )]
+                
+                # Format response (NO large arrays in context)
+                response_text = f"""
+Full Spectrum Data Retrieved for ID: {sparcl_id}
+===============================================
+
+METADATA:
+Object Type: {metadata['object_type']}
+Redshift: {metadata['redshift']}
+Redshift Error: {metadata['redshift_err']}
+Redshift Warning: {metadata['redshift_warning']}
+Coordinates: RA={metadata['ra']:.4f}°, Dec={metadata['dec']:.4f}°
+Survey: {metadata['survey']}
+Data Release: {metadata['data_release']}
+
+SPECTRAL DATA INFO:
+Wavelength Range: {data_info['wavelength_range'][0]:.1f} - {data_info['wavelength_range'][1]:.1f} {data_info['wavelength_unit']}
+Number of Pixels: {data_info['num_pixels']:,}
+Flux Units: {data_info['flux_unit']}
+Model Available: {data_info['has_model']}
+Inverse Variance Available: {data_info['has_inverse_variance']}
+
+FILES SAVED:
+✅ JSON format: {json_filename}
+✅ Text format: {txt_filename}
+
+USAGE FOR ANALYSIS:
+To load and plot this spectrum data, use:
+
+```python
+import json
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Load the spectrum data
+with open('{json_filename}', 'r') as f:
+    spectrum = json.load(f)
+
+# Extract data
+wavelength = np.array(spectrum['data']['wavelength'])
+flux = np.array(spectrum['data']['flux'])
+model = np.array(spectrum['data']['model']) if spectrum['data']['model'] else None
+
+# Create plot
+plt.figure(figsize=(12, 8))
+plt.plot(wavelength, flux, 'b-', alpha=0.7, label='Observed')
+if model is not None:
+    plt.plot(wavelength, model, 'r-', alpha=0.8, label='Model')
+plt.xlabel('Wavelength (Å)')
+plt.ylabel('Flux ({data_info['flux_unit']})')
+plt.title(f'{metadata["object_type"]} Spectrum (z={metadata["redshift"]:.3f})')
+plt.legend()
+plt.grid(True, alpha=0.3)
+plt.savefig('spectrum_plot.png', dpi=300, bbox_inches='tight')
+plt.show()
+```
+
+The spectrum data is now saved to disk and ready for analysis!
+"""
+                
+                return [types.TextContent(type="text", text=response_text)]
+            
             else:
                 return [types.TextContent(
                     type="text", 
-                    text=f"Raw spectrum data available. Use format='summary' for details or access .flux, .wavelength arrays directly."
+                    text=f"Unknown format '{format_type}'. Use 'summary' or 'full'."
                 )]
 
         elif name == "search_by_object_type":
@@ -705,9 +910,10 @@ Target ID: {spectrum.get('targetid', 'N/A')}
             magnitude_max = arguments.get("magnitude_max")
             max_results = arguments.get("max_results", 1000)
             
-            constraints = {'spectype': [object_type]}
+            # Use correct SPARCL syntax - spectype as list and uppercase
+            constraints = {'spectype': [object_type.upper()]}
             
-            # Add redshift constraints
+            # Add redshift constraints using correct range format
             if redshift_min is not None or redshift_max is not None:
                 z_range = []
                 if redshift_min is not None:
@@ -720,26 +926,42 @@ Target ID: {spectrum.get('targetid', 'N/A')}
                     z_range.append(10.0)  # Default max
                 constraints['redshift'] = z_range
             
-            # Add magnitude constraints if provided
-            if magnitude_min is not None or magnitude_max is not None:
-                mag_range = []
-                if magnitude_min is not None:
-                    mag_range.append(magnitude_min)
-                else:
-                    mag_range.append(10.0)  # Bright limit
-                if magnitude_max is not None:
-                    mag_range.append(magnitude_max)
-                else:
-                    mag_range.append(25.0)  # Faint limit
-                constraints['mag'] = mag_range
+            # Note: magnitude constraints may not be available in SPARCL core fields
+            # Commenting out for now as it's not in the standard SPARCL constraint types
+            # if magnitude_min is not None or magnitude_max is not None:
+            #     mag_range = []
+            #     if magnitude_min is not None:
+            #         mag_range.append(magnitude_min)
+            #     else:
+            #         mag_range.append(10.0)  # Bright limit
+            #     if magnitude_max is not None:
+            #         mag_range.append(magnitude_max)
+            #     else:
+            #         mag_range.append(25.0)  # Faint limit
+            #     constraints['mag'] = mag_range
             
             found = desi_server.sparcl_client.find(
                 constraints=constraints,
-                outfields=['sparcl_id', 'ra', 'dec', 'redshift', 'spectype', 'survey', 'program']
+                outfields=['sparcl_id', 'ra', 'dec', 'redshift', 'spectype', 'survey', 'data_release'],
+                limit=max_results
             )
+            
+            # Create detailed response with search results and retrieval info
+            search_summary = format_search_results(found, min(max_results, 10))
+            
+            # Add information about how to get detailed spectra
+            response_text = f"SPARCL object type search results:\n{search_summary}"
+            
+            if hasattr(found, 'ids') and found.ids:
+                first_id = found.ids[0]
+                response_text += f"\n\nTo get detailed spectrum information, use get_spectrum_by_id with:"
+                response_text += f"\n  - First object ID: {first_id}"
+                response_text += f"\n  - Available IDs: {len(found.ids)} total"
+                response_text += f"\n\nExample: get_spectrum_by_id('{first_id}')"
+            
             return [types.TextContent(
                 type="text",
-                text=f"SPARCL search results:\n{format_search_results(found, max_results)}"
+                text=response_text
             )]
 
         elif name == "search_in_region":
@@ -749,7 +971,7 @@ Target ID: {spectrum.get('targetid', 'N/A')}
             dec_max = arguments["dec_max"]
             max_results = arguments.get("max_results", 1000)
             
-            # Use constraints for SPARCL region search
+            # Use constraints for SPARCL region search with proper format
             constraints = {
                 'ra': [ra_min, ra_max],
                 'dec': [dec_min, dec_max]
@@ -757,12 +979,13 @@ Target ID: {spectrum.get('targetid', 'N/A')}
             
             found = desi_server.sparcl_client.find(
                 constraints=constraints,
-                outfields=['sparcl_id', 'ra', 'dec', 'redshift', 'spectype', 'survey', 'program']
+                outfields=['sparcl_id', 'ra', 'dec', 'redshift', 'spectype', 'survey', 'data_release'],
+                limit=max_results
             )
             
             return [types.TextContent(
                 type="text",
-                text=f"SPARCL region search results:\n{format_search_results(found, max_results)}"
+                text=f"SPARCL region search results:\n{format_search_results(found, min(max_results, 10))}"
             )]
         
         else:

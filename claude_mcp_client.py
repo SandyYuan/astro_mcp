@@ -92,13 +92,19 @@ When users ask about astronomical objects, coordinates, spectra, or redshifts, u
     
     async def query(self, user_query: str) -> str:
         """
-        Process a natural language query using Claude and MCP tools.
+        Send a query to Claude, allowing multiple rounds of tool usage.
+        
+        This method now supports iterative conversations where Claude can:
+        1. Use tools to get initial data
+        2. Analyze the results 
+        3. Make follow-up tool calls as needed
+        4. Provide a comprehensive final response
         
         Args:
             user_query: Natural language query about DESI data
             
         Returns:
-            Claude's response after potentially using MCP tools
+            Claude's response after potentially using MCP tools multiple times
         """
         print(f"\n🔍 Processing query: {user_query}")
         
@@ -115,39 +121,51 @@ When users ask about astronomical objects, coordinates, spectra, or redshifts, u
             }
         ]
         
-        # Send query to Claude with available tools
-        response = await self._call_claude(messages)
+        # Allow up to 5 rounds of tool usage to prevent infinite loops
+        max_tool_rounds = 5
+        tool_round = 0
         
-        # Handle tool usage if Claude wants to use tools
-        if response.stop_reason == "tool_use":
-            # Add Claude's response (including tool calls) to conversation
-            messages.append({
-                "role": "assistant", 
-                "content": response.content
-            })
+        while tool_round < max_tool_rounds:
+            # Send query to Claude with available tools
+            response = await self._call_claude(messages)
             
-            # Process all tool calls
-            for content_block in response.content:
-                if content_block.type == "tool_use":
-                    tool_result = await self._execute_tool(content_block)
-                    
-                    # Add tool result to conversation
-                    messages.append({
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": content_block.id,
-                                "content": tool_result
-                            }
-                        ]
-                    })
-            
-            # Get Claude's final response with tool results
-            final_response = await self._call_claude(messages)
-            return self._extract_text_content(final_response.content)
-        else:
-            return self._extract_text_content(response.content)
+            # Handle tool usage if Claude wants to use tools
+            if response.stop_reason == "tool_use":
+                tool_round += 1
+                print(f"🔄 Tool usage round {tool_round}/{max_tool_rounds}")
+                
+                # Add Claude's response (including tool calls) to conversation
+                messages.append({
+                    "role": "assistant", 
+                    "content": response.content
+                })
+                
+                # Process all tool calls in this round
+                for content_block in response.content:
+                    if content_block.type == "tool_use":
+                        tool_result = await self._execute_tool(content_block)
+                        
+                        # Add tool result to conversation
+                        messages.append({
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": content_block.id,
+                                    "content": tool_result
+                                }
+                            ]
+                        })
+                
+                # Continue the loop to let Claude potentially use more tools
+                continue
+            else:
+                # Claude provided a final response without tool use
+                return self._extract_text_content(response.content)
+        
+        # If we hit the max rounds limit, return the last response
+        print(f"⚠️  Reached maximum tool usage rounds ({max_tool_rounds})")
+        return self._extract_text_content(response.content)
     
     async def _call_claude(self, messages: List[Dict]) -> Any:
         """Call Claude API with messages and tools using correct syntax."""
