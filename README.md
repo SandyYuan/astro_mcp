@@ -112,6 +112,49 @@ Add to your MCP client configuration:
    get_spectrum_by_id(sparcl_id="<spectrum-id>", format="summary")
    ```
 
+### Complete Working Example
+
+Here's a full example using the included Claude MCP client to find and analyze a galaxy spectrum:
+
+**Query**: "Find the nearest galaxy to ra=9.9443, dec=41.7221, and return its spectrum and redshift"
+
+**Tools Used**:
+1. `find_spectra_by_coordinates(ra=9.9443, dec=41.7221, radius=0.1, max_results=50)`
+2. `get_spectrum_by_id(sparcl_id="1270d3c4-9d36-11ee-94ad-525400ad1336", format="full")`
+
+**Results**:
+```
+## Nearest Galaxy Found:
+
+**Location:** RA = 9.9443°, Dec = 41.7221° (exactly at target coordinates!)
+
+**Redshift:** z = 0.621 ± 0.0001
+- Lookback time: ~5.7 billion years
+- Recession velocity: ~186,000 km/s
+
+**Object Details:**
+- **Type:** Galaxy (spectroscopically confirmed)
+- **Survey:** DESI SV1 (Survey Validation phase)
+- **Data Release:** DESI Early Data Release (EDR)
+- **SPARCL ID:** 1270d3c4-9d36-11ee-94ad-525400ad1336
+
+**Spectrum Information:**
+- **Wavelength coverage:** 3,600 - 9,824 Angstroms
+- **Resolution:** 7,781 spectral pixels
+- **Quality:** High-quality spectrum with model fit available
+- **Files saved:** spectrum_GALAXY_0.6210_1270d3c4.json and .txt
+
+The spectrum data is saved to disk in both JSON and text formats, ready for 
+analysis and visualization with matplotlib or other tools.
+```
+
+This example demonstrates the server's ability to:
+- Find astronomical objects by coordinates
+- Retrieve detailed spectroscopic measurements
+- Access high-quality DESI survey data
+- Provide both metadata and full spectral arrays
+- Save data in analysis-ready formats
+
 ## Data Access
 
 This server uses [SPARCL](https://github.com/astro-datalab/sparclclient) to access DESI data:

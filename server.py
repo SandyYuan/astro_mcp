@@ -526,12 +526,6 @@ def format_search_results(found, show_limit=10):
     if len(found.records) > show_limit:
         summary += f"\n... and {len(found.records) - show_limit} more objects"
     
-    # Add note about retrieving detailed spectra using the .ids property
-    if hasattr(found, 'ids') and found.ids:
-        first_id = found.ids[0] if found.ids else 'N/A'
-        summary += f"\n\nFirst SPARCL ID for detailed retrieval: {first_id}"
-        summary += f"\nTotal IDs available: {len(found.ids) if found.ids else 0}"
-    
     return summary
 
 def get_first_spectrum_id(found):
@@ -859,39 +853,6 @@ Inverse Variance Available: {data_info['has_inverse_variance']}
 FILES SAVED:
 ✅ JSON format: {json_filename}
 ✅ Text format: {txt_filename}
-
-USAGE FOR ANALYSIS:
-To load and plot this spectrum data, use:
-
-```python
-import json
-import numpy as np
-import matplotlib.pyplot as plt
-
-# Load the spectrum data
-with open('{json_filename}', 'r') as f:
-    spectrum = json.load(f)
-
-# Extract data
-wavelength = np.array(spectrum['data']['wavelength'])
-flux = np.array(spectrum['data']['flux'])
-model = np.array(spectrum['data']['model']) if spectrum['data']['model'] else None
-
-# Create plot
-plt.figure(figsize=(12, 8))
-plt.plot(wavelength, flux, 'b-', alpha=0.7, label='Observed')
-if model is not None:
-    plt.plot(wavelength, model, 'r-', alpha=0.8, label='Model')
-plt.xlabel('Wavelength (Å)')
-plt.ylabel('Flux ({data_info['flux_unit']})')
-plt.title(f'{metadata["object_type"]} Spectrum (z={metadata["redshift"]:.3f})')
-plt.legend()
-plt.grid(True, alpha=0.3)
-plt.savefig('spectrum_plot.png', dpi=300, bbox_inches='tight')
-plt.show()
-```
-
-The spectrum data is now saved to disk and ready for analysis!
 """
                 
                 return [types.TextContent(type="text", text=response_text)]

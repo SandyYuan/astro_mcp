@@ -262,9 +262,9 @@ async def run_example_queries(client: ClaudeMCPClient):
     
     example_queries = [
         "find the nearest galaxy to ra=9.9443, dec=41.7221, and return its spectrum and redshift",
-        # "search for high redshift quasars between z=2.0 and z=3.0, limit to 5 results",
-        # "what objects are in the sky region from RA 150 to 151 degrees and Dec 2 to 3 degrees?",
-        # "find stars near coordinates ra=45.2, dec=-12.8 within 30 arcseconds"
+        "what is the highest redshift quasars in DESI DR1",
+        "How many galaxies are in the sky region from RA 150 to 150.1 degrees and Dec 2.2 to 2.3 degrees?",
+        "How many stars are near coordinates ra=45.2, dec=-12.8 within 30 arcseconds"
     ]
     
     for i, query in enumerate(example_queries, 1):
