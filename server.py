@@ -293,9 +293,15 @@ async def handle_list_tools() -> list[types.Tool]:
     
     Available Tools:
     
-    1. "find_spectra_by_coordinates" - Search for DESI astronomical objects within a circular region around given sky coordinates. Performs a cone search using RA/Dec coordinates with configurable radius. Returns objects with their spectroscopic redshifts, object types (galaxy/quasar/star), precise coordinates, and SPARCL IDs for detailed retrieval. Useful for finding objects near known sources, cross-matching with other catalogs, or exploring specific sky regions. Search radius should typically be 0.01-1.0 degrees depending on desired density.
+    1. "find_spectra_by_coordinates"
+       - Two modes based on radius parameter:
+         * No radius: finds the nearest single object to coordinates
+         * With radius: finds all objects within circular search region  
+       - Calculates angular separations for distance measurements
+       - Validates coordinate ranges and search parameters
+       - Returns objects with full metadata and SPARCL IDs
     
-    2. "get_spectrum_by_id" - Retrieve detailed information and full spectral data for a specific DESI spectrum using its unique SPARCL identifier. Returns comprehensive object information including spectroscopic redshift, measurement quality flags, precise coordinates, survey program details, and data release version. With format='full', returns structured JSON data containing wavelength and flux arrays that can be used for analysis and visualization. The SPARCL ID is typically obtained from previous search results.
+    2. "get_spectrum_by_id" - Retrieve detailed information and full spectral data for a specific DESI spectrum using its unique SPARCL identifier. Returns comprehensive object information including spectroscopic redshift, measurement quality flags, precise coordinates, survey program details, and data release version. With format='full', returns structured JSON data with complete spectral arrays (wavelength, flux, model, etc.) for analysis and visualization. The SPARCL ID is typically obtained from previous search results.
     
     3. "search_by_object_type" - Search for DESI objects filtered by their spectroscopic classification (galaxy, quasar, or star) with optional redshift and magnitude constraints. Spectroscopic types are determined by automated pipelines analyzing the observed spectra. Supports building scientifically useful samples with precise selection criteria. Redshift constraints use spectroscopic redshifts (not photometric estimates). Magnitude constraints typically refer to r-band apparent magnitudes. Essential for statistical studies, rare object searches, and building clean samples for analysis.
     
@@ -323,7 +329,7 @@ async def handle_list_tools() -> list[types.Tool]:
     return [
         types.Tool(
             name="find_spectra_by_coordinates",
-            description="Search for DESI astronomical objects within a circular region around given sky coordinates. Performs a cone search using RA/Dec coordinates with configurable radius. Returns objects with their spectroscopic redshifts, object types (galaxy/quasar/star), precise coordinates, and SPARCL IDs for detailed retrieval. Useful for finding objects near known sources, cross-matching with other catalogs, or exploring specific sky regions. Search radius should typically be 0.01-1.0 degrees depending on desired density.",
+            description="Search for DESI astronomical objects by sky coordinates. Two modes: (1) No radius specified - finds the nearest single object to the given coordinates with angular separation. (2) Radius specified - finds all objects within the circular search region. Returns objects with spectroscopic redshifts, object types, precise coordinates, and SPARCL IDs for detailed retrieval.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -332,18 +338,18 @@ async def handle_list_tools() -> list[types.Tool]:
                         "description": "Right Ascension in decimal degrees (0-360). J2000 epoch coordinates. Example: 10.68 for 42.72 minutes of RA in degrees."
                     },
                     "dec": {
-                        "type": "number", 
+                        "type": "number",
                         "description": "Declination in decimal degrees (-90 to +90). J2000 epoch coordinates. Example: 41.27 for +41°16' declination."
                     },
                     "radius": {
                         "type": "number",
-                        "description": "Search radius in degrees (default: 0.01 = 36 arcseconds). Typical values: 0.01° for targeted searches, 0.1° for wider areas, 1.0° for large regions. Larger radii return more objects but may be slower.",
-                        "default": 0.01
+                        "description": "Optional search radius in degrees. If not specified, returns the nearest single object to the coordinates. If specified, returns all objects within the radius. Typical values: 0.01° (36 arcsec), 0.1° (6 arcmin), 1.0° for large regions.",
+                        "minimum": 0
                     },
                     "max_results": {
                         "type": "integer",
-                        "description": "Maximum number of results to return (default: 100). Limits response size for large searches. Range: 1-10000. For initial exploration, 100 is usually sufficient.",
-                        "default": 100
+                        "description": "Optional limit on number of results to return. If not specified, returns all objects matching the search criteria. SPARCL maximum is ~24,000 objects per query.",
+                        "minimum": 1
                     }
                 },
                 "required": ["ra", "dec"]
@@ -351,7 +357,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="get_spectrum_by_id",
-            description="Retrieve detailed information and full spectral data for a specific DESI spectrum using its unique SPARCL identifier. Returns comprehensive object information including spectroscopic redshift, measurement quality flags, precise coordinates, survey program details, and data release version. With format='full', returns structured JSON data containing wavelength and flux arrays that can be used for analysis and visualization. The SPARCL ID is typically obtained from previous search results.",
+            description="Retrieve detailed information and full spectral data for a specific DESI spectrum using its unique SPARCL identifier. Returns comprehensive object information including spectroscopic redshift, measurement quality flags, precise coordinates, survey program details, and data release version. With format='full', returns structured JSON data with complete spectral arrays (wavelength, flux, model, etc.) for analysis and visualization. The SPARCL ID is typically obtained from previous search results.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -400,8 +406,8 @@ async def handle_list_tools() -> list[types.Tool]:
                     },
                     "max_results": {
                         "type": "integer",
-                        "description": "Maximum number of results to return (default: 1000). Large samples may require multiple queries. Balance between completeness and response time.",
-                        "default": 1000
+                        "description": "Optional limit on number of results to return. If not specified, returns all objects matching the search criteria. SPARCL maximum is ~24,000 objects per query.",
+                        "minimum": 1
                     }
                 },
                 "required": ["object_type"]
@@ -427,12 +433,12 @@ async def handle_list_tools() -> list[types.Tool]:
                     },
                     "dec_max": {
                         "type": "number",
-                        "description": "Maximum Declination boundary in decimal degrees (-90 to +90). Northern edge of the search box. Must be > dec_min and account for DESI's observing constraints."
+                        "description": "Maximum Declination boundary in decimal degrees (-90 to +90). Northern edge of the search box. Must be > dec_min and account for DESI's observing constraints.",
                     },
                     "max_results": {
                         "type": "integer",
-                        "description": "Maximum number of results to return (default: 1000). Large sky regions may contain thousands of objects. Consider breaking large areas into smaller queries.",
-                        "default": 1000
+                        "description": "Optional limit on number of results to return. If not specified, returns all objects matching the search criteria. SPARCL maximum is ~24,000 objects per query.",
+                        "minimum": 1
                     }
                 },
                 "required": ["ra_min", "ra_max", "dec_min", "dec_max"]
@@ -558,9 +564,12 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
     Supported Tools:
     
     1. "find_spectra_by_coordinates"
-       - Performs cone search around RA/Dec coordinates
+       - Two modes based on radius parameter:
+         * No radius: finds the nearest single object to coordinates
+         * With radius: finds all objects within circular search region  
+       - Calculates angular separations for distance measurements
        - Validates coordinate ranges and search parameters
-       - Returns objects within specified radius with full metadata
+       - Returns objects with full metadata and SPARCL IDs
        
     2. "get_spectrum_by_id"  
        - Retrieves detailed spectrum information by SPARCL UUID
@@ -623,7 +632,11 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
         - Results are formatted for display, not optimized for bulk processing
     
     Example Usage:
-        # Coordinate search
+        # Coordinate search - nearest object mode
+        result = await call_tool("find_spectra_by_coordinates", 
+                                {"ra": 10.68, "dec": 41.27})
+        
+        # Coordinate search - radius mode  
         result = await call_tool("find_spectra_by_coordinates", 
                                 {"ra": 10.68, "dec": 41.27, "radius": 0.1})
         
@@ -653,26 +666,98 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
         if name == "find_spectra_by_coordinates":
             ra = arguments["ra"]
             dec = arguments["dec"]
-            radius = arguments.get("radius", 0.01)  # Default 0.01 degrees
-            max_results = arguments.get("max_results", 100)
+            radius = arguments.get("radius")  # No default - behavior depends on whether provided
+            max_results = arguments.get("max_results")  # No default - get all results if not specified
             
-            # Use constraints for SPARCL coordinate search with proper range format
-            constraints = {
-                'ra': [ra - radius, ra + radius],
-                'dec': [dec - radius, dec + radius]
-            }
-            found = desi_server.sparcl_client.find(
-                constraints=constraints,
-                outfields=['sparcl_id', 'ra', 'dec', 'redshift', 'spectype', 'survey', 'data_release'],
-                limit=max_results
-            )
+            if radius is None:
+                # No radius provided: Find the nearest single object
+                # Search in a reasonable area and then find the closest
+                search_radius = 0.1  # 0.1 degree search area (6 arcmin)
+                constraints = {
+                    'ra': [ra - search_radius, ra + search_radius],
+                    'dec': [dec - search_radius, dec + search_radius]
+                }
+                
+                # Get candidates with a reasonable limit
+                find_params = {
+                    'constraints': constraints,
+                    'outfields': ['sparcl_id', 'ra', 'dec', 'redshift', 'spectype', 'survey', 'data_release'],
+                    'limit': 1000  # Get enough candidates to find the true nearest
+                }
+                
+                found = desi_server.sparcl_client.find(**find_params)
+                
+                if not hasattr(found, 'records') or not found.records:
+                    return [types.TextContent(
+                        type="text",
+                        text=f"No objects found near coordinates RA={ra:.4f}°, Dec={dec:.4f}°"
+                    )]
+                
+                # Calculate angular distances and find the nearest
+                import math
+                min_distance = float('inf')
+                nearest_record = None
+                
+                for record in found.records:
+                    obj_ra = getattr(record, 'ra', None)
+                    obj_dec = getattr(record, 'dec', None)
+                    if obj_ra is not None and obj_dec is not None:
+                        # Angular distance calculation (small angle approximation)
+                        cos_dec = math.cos(math.radians(dec))
+                        delta_ra = (obj_ra - ra) * cos_dec
+                        delta_dec = obj_dec - dec
+                        distance = math.sqrt(delta_ra**2 + delta_dec**2)
+                        
+                        if distance < min_distance:
+                            min_distance = distance
+                            nearest_record = record
+                
+                if nearest_record is None:
+                    return [types.TextContent(
+                        type="text",
+                        text=f"No valid objects found near coordinates RA={ra:.4f}°, Dec={dec:.4f}°"
+                    )]
+                
+                # Create a mock found object with just the nearest record
+                class MockFound:
+                    def __init__(self, record):
+                        self.records = [record]
+                        self.ids = [getattr(record, 'sparcl_id', None)] if hasattr(record, 'sparcl_id') else []
+                
+                found = MockFound(nearest_record)
+                
+                # Format the single nearest result
+                obj_ra = getattr(nearest_record, 'ra', 'N/A')
+                obj_dec = getattr(nearest_record, 'dec', 'N/A')
+                distance_arcsec = min_distance * 3600 if min_distance != float('inf') else 'N/A'
+                
+                response_text = f"Nearest object to RA={ra:.4f}°, Dec={dec:.4f}°:\n\n"
+                response_text += format_search_results(found, 1)
+                response_text += f"\nAngular separation: {distance_arcsec:.1f} arcseconds"
+                
+            else:
+                # Radius provided: Find all objects within radius
+                constraints = {
+                    'ra': [ra - radius, ra + radius],
+                    'dec': [dec - radius, dec + radius]
+                }
+                
+                # Build find parameters - only include limit if max_results specified
+                find_params = {
+                    'constraints': constraints,
+                    'outfields': ['sparcl_id', 'ra', 'dec', 'redshift', 'spectype', 'survey', 'data_release']
+                }
+                if max_results is not None:
+                    find_params['limit'] = max_results
+                    
+                found = desi_server.sparcl_client.find(**find_params)
+                
+                # Create detailed response with search results
+                display_limit = min(max_results, 10) if max_results else 10
+                search_summary = format_search_results(found, display_limit)
+                response_text = f"Objects within {radius}° of RA={ra:.4f}°, Dec={dec:.4f}°:\n{search_summary}"
             
-            # Create detailed response with search results and retrieval info
-            search_summary = format_search_results(found, min(max_results, 10))
-            
-            # Add information about how to get detailed spectra
-            response_text = f"SPARCL coordinate search results:\n{search_summary}"
-            
+            # Add information about how to get detailed spectra (for both cases)
             if hasattr(found, 'ids') and found.ids:
                 first_id = found.ids[0]
                 response_text += f"\n\nTo get detailed spectrum information, use get_spectrum_by_id with:"
@@ -680,10 +765,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
                 response_text += f"\n  - Available IDs: {len(found.ids)} total"
                 response_text += f"\n\nExample: get_spectrum_by_id('{first_id}')"
             
-            return [types.TextContent(
-                type="text",
-                text=response_text
-            )]
+            return [types.TextContent(type="text", text=response_text)]
 
         elif name == "get_spectrum_by_id":
             sparcl_id = arguments["sparcl_id"]
@@ -869,7 +951,7 @@ FILES SAVED:
             redshift_max = arguments.get("redshift_max")
             magnitude_min = arguments.get("magnitude_min")
             magnitude_max = arguments.get("magnitude_max")
-            max_results = arguments.get("max_results", 1000)
+            max_results = arguments.get("max_results")  # No default - get all results if not specified
             
             # Use correct SPARCL syntax - spectype as list and uppercase
             constraints = {'spectype': [object_type.upper()]}
@@ -887,28 +969,32 @@ FILES SAVED:
                     z_range.append(10.0)  # Default max
                 constraints['redshift'] = z_range
             
-            # Note: magnitude constraints may not be available in SPARCL core fields
-            # Commenting out for now as it's not in the standard SPARCL constraint types
-            # if magnitude_min is not None or magnitude_max is not None:
-            #     mag_range = []
-            #     if magnitude_min is not None:
-            #         mag_range.append(magnitude_min)
-            #     else:
-            #         mag_range.append(10.0)  # Bright limit
-            #     if magnitude_max is not None:
-            #         mag_range.append(magnitude_max)
-            #     else:
-            #         mag_range.append(25.0)  # Faint limit
-            #     constraints['mag'] = mag_range
+            # Add magnitude constraints using correct range format
+            if magnitude_min is not None or magnitude_max is not None:
+                m_range = []
+                if magnitude_min is not None:
+                    m_range.append(magnitude_min)
+                else:
+                    m_range.append(15.0)  # Default min
+                if magnitude_max is not None:
+                    m_range.append(magnitude_max)
+                else:
+                    m_range.append(24.0)  # Default max
+                constraints['magnitude'] = m_range
             
-            found = desi_server.sparcl_client.find(
-                constraints=constraints,
-                outfields=['sparcl_id', 'ra', 'dec', 'redshift', 'spectype', 'survey', 'data_release'],
-                limit=max_results
-            )
+            # Build find parameters - only include limit if max_results specified
+            find_params = {
+                'constraints': constraints,
+                'outfields': ['sparcl_id', 'ra', 'dec', 'redshift', 'spectype', 'survey', 'data_release']
+            }
+            if max_results is not None:
+                find_params['limit'] = max_results
+                
+            found = desi_server.sparcl_client.find(**find_params)
             
             # Create detailed response with search results and retrieval info
-            search_summary = format_search_results(found, min(max_results, 10))
+            display_limit = min(max_results, 10) if max_results else 10
+            search_summary = format_search_results(found, display_limit)
             
             # Add information about how to get detailed spectra
             response_text = f"SPARCL object type search results:\n{search_summary}"
@@ -930,7 +1016,7 @@ FILES SAVED:
             ra_max = arguments["ra_max"]
             dec_min = arguments["dec_min"]
             dec_max = arguments["dec_max"]
-            max_results = arguments.get("max_results", 1000)
+            max_results = arguments.get("max_results")  # No default - get all results if not specified
             
             # Use constraints for SPARCL region search with proper format
             constraints = {
@@ -938,15 +1024,20 @@ FILES SAVED:
                 'dec': [dec_min, dec_max]
             }
             
-            found = desi_server.sparcl_client.find(
-                constraints=constraints,
-                outfields=['sparcl_id', 'ra', 'dec', 'redshift', 'spectype', 'survey', 'data_release'],
-                limit=max_results
-            )
+            # Build find parameters - only include limit if max_results specified
+            find_params = {
+                'constraints': constraints,
+                'outfields': ['sparcl_id', 'ra', 'dec', 'redshift', 'spectype', 'survey', 'data_release']
+            }
+            if max_results is not None:
+                find_params['limit'] = max_results
+                
+            found = desi_server.sparcl_client.find(**find_params)
             
+            display_limit = min(max_results, 10) if max_results else 10
             return [types.TextContent(
                 type="text",
-                text=f"SPARCL region search results:\n{format_search_results(found, min(max_results, 10))}"
+                text=f"SPARCL region search results:\n{format_search_results(found, display_limit)}"
             )]
         
         else:
