@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 
 """
-DESI MCP Server - Basic Implementation
+DESI MCP Server - SPARCL Implementation
 
 This is a Model Context Protocol (MCP) server that provides access to DESI 
 (Dark Energy Spectroscopic Instrument) data through the SPARCL client.
 
 Features:
 - Search for spectra by coordinates
-- Retrieve specific spectra by ID  
-- Search by object type (galaxy, quasar, star)
+- Retrieve specific spectra by ID
+- Search by object type
 - Query rectangular sky regions
 - Basic data validation and error handling
 
@@ -19,28 +19,21 @@ Usage:
 
 import asyncio
 import logging
-from typing import Any, Sequence
+from typing import Any
+import json
 
-from mcp.server import Server, NotificationOptions
-from mcp.server.models import InitializationOptions
-from mcp.types import (
-    Resource,
-    Tool,
-    TextContent,
-    ImageContent,
-    EmbeddedResource,
-    LoggingLevel
-)
 import mcp.server.stdio
 import mcp.types as types
+from mcp import Resource, Tool
+from mcp.server import NotificationOptions, Server
+from mcp.server.models import InitializationOptions
+from pydantic import AnyUrl
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("desi-mcp-server")
+logger = logging.getLogger(__name__)
 
-# Initialize the MCP server
-server = Server("desi-basic")
-
+# Try to import SPARCL client
 try:
     from sparcl.client import SparclClient
     SPARCL_AVAILABLE = True
@@ -49,9 +42,14 @@ except ImportError:
     SPARCL_AVAILABLE = False
     logger.warning("SPARCL client not available - install with: pip install sparclclient")
 
+# Initialize server and DESI client
+server = Server("desi-basic")
+
 class DESIMCPServer:
     def __init__(self):
         self.sparcl_client = None
+        
+        # Initialize SPARCL if available
         if SPARCL_AVAILABLE:
             try:
                 self.sparcl_client = SparclClient()
@@ -59,103 +57,105 @@ class DESIMCPServer:
             except Exception as e:
                 logger.error(f"Failed to initialize SPARCL client: {e}")
                 self.sparcl_client = None
+        
+        logger.info("DESI MCP Server initialized")
 
 desi_server = DESIMCPServer()
 
 @server.list_resources()
-async def list_resources() -> list[Resource]:
-    """List available DESI data resources."""
-    resources = [
-        Resource(
-            uri="desi://data/available",
-            name="Available DESI Data",
-            description="Current SPARCL database contents and statistics",
-            mimeType="text/plain",
+async def handle_list_resources() -> list[types.Resource]:
+    """List the available resources."""
+    return [
+        types.Resource(
+            uri="desi://help/overview",
+            name="DESI Data Access Help",
+            description="Overview of DESI data access through SPARCL",
+            mimeType="text/plain"
         ),
-        Resource(
-            uri="desi://help/tools",
-            name="DESI MCP Tools Help",
-            description="Information about available tools and their usage",
-            mimeType="text/plain",
-        ),
+        types.Resource(
+            uri="desi://info/data_availability", 
+            name="Data Availability Status",
+            description="Current status of DESI data services (SPARCL)",
+            mimeType="text/plain"
+        )
     ]
-    return resources
 
 @server.read_resource()
-async def read_resource(uri: str) -> str:
-    """Read a specific resource."""
-    if uri == "desi://data/available":
-        if not SPARCL_AVAILABLE or not desi_server.sparcl_client:
-            return "SPARCL client not available. Please install with: pip install sparclclient"
-        
-        try:
-            # Try to get some basic stats from SPARCL
-            # Note: This is a placeholder implementation as the actual API may vary
-            return """
-DESI Data Available via SPARCL:
-- Data Release: DR1 (and ongoing)
-- Total spectra: Several million (exact count varies with releases)
-- Object types: Galaxies, Quasars, Stars
-- Sky coverage: ~14,000 square degrees
-- Redshift range: 0 < z < 4+
-- Survey programs: BGS, LRG, ELG, QSO, MWS
-- Quality: Includes quality flags (ZWARN, etc.)
-
-Note: Use find_spectra_by_coordinates or search_by_object_type to access data.
-"""
-        except Exception as e:
-            return f"Error accessing DESI data statistics: {str(e)}"
+async def handle_read_resource(uri: AnyUrl) -> str:
+    """Read a resource by URI."""
+    if uri.scheme != "desi":
+        raise ValueError(f"Unsupported URI scheme: {uri.scheme}")
     
-    elif uri == "desi://help/tools":
+    path = str(uri).replace("desi://", "")
+    
+    if path == "help/overview":
         return """
-DESI MCP Server - Available Tools:
+DESI MCP Server - Data Access Help
+=====================================
 
-1. find_spectra_by_coordinates
-   - Find DESI spectra near given sky coordinates
-   - Parameters: ra (degrees), dec (degrees), radius_arcsec (default: 10), max_results (default: 100)
+This server provides access to DESI (Dark Energy Spectroscopic Instrument) data through:
 
-2. get_spectrum_by_id
-   - Retrieve a single spectrum by SPARCL ID
-   - Parameters: sparcl_id (string), format (summary/full/metadata_only)
+SPARCL (SPectra Analysis & Retrievable Catalog Lab)
+- Full spectral data access (flux vs wavelength)
+- Advanced search capabilities  
+- Maintained by NOIRLab
 
-3. search_by_object_type
-   - Search for objects by type and properties
-   - Parameters: object_type (GALAXY/QSO/STAR), redshift_min/max, magnitude_min/max, max_results
+Available Tools:
+1. find_spectra_by_coordinates - Search by sky position
+2. get_spectrum_by_id - Retrieve specific spectrum
+3. search_by_object_type - Find galaxies, quasars, or stars
+4. search_in_region - Query rectangular sky areas
 
-4. search_in_region
-   - Search for spectra in a rectangular sky region
-   - Parameters: ra_min, ra_max, dec_min, dec_max, quality_filter
+Data Coverage:
+- DESI Early Data Release (EDR): ~1.8 million spectra  
+- DESI Data Release 1 (DR1): ~18+ million spectra
+- Spectral resolution R ~ 2000-5500
+- Wavelength coverage: 360-980 nm
 
-Examples:
-- Find galaxies near M31: find_spectra_by_coordinates(ra=10.68, dec=41.27, radius_arcsec=60)
-- Find bright quasars: search_by_object_type(object_type="QSO", magnitude_max=19.0)
+Notes:
+- All coordinates in decimal degrees (J2000)
+- Requires SPARCL client installation
+"""
+    
+    elif path == "info/data_availability":
+        sparcl_status = "✅ Available" if desi_server.sparcl_client else "❌ Unavailable"
+        
+        return f"""
+DESI Data Services Status
+========================
+
+SPARCL Service: {sparcl_status}
+- Spectral data retrieval: {'Yes' if desi_server.sparcl_client else 'No'}
+- Advanced search: {'Yes' if desi_server.sparcl_client else 'No'}
+
+Current Mode: {'SPARCL' if desi_server.sparcl_client else 'Service Unavailable'}
 """
     
     else:
-        raise ValueError(f"Unknown resource: {uri}")
+        raise ValueError(f"Unknown resource: {path}")
 
 @server.list_tools()
-async def list_tools() -> list[Tool]:
-    """List available tools for DESI data access."""
-    tools = [
-        Tool(
+async def handle_list_tools() -> list[types.Tool]:
+    """List the available tools for DESI data access."""
+    return [
+        types.Tool(
             name="find_spectra_by_coordinates",
-            description="Find DESI spectra near given coordinates using SPARCL",
+            description="Search for DESI spectra near given sky coordinates (RA/Dec).",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "ra": {
                         "type": "number",
-                        "description": "Right ascension in degrees (0-360)"
+                        "description": "Right Ascension in decimal degrees (0-360)"
                     },
                     "dec": {
                         "type": "number", 
-                        "description": "Declination in degrees (-90 to +90)"
+                        "description": "Declination in decimal degrees (-90 to +90)"
                     },
-                    "radius_arcsec": {
+                    "radius": {
                         "type": "number",
-                        "description": "Search radius in arcseconds (default: 10.0)",
-                        "default": 10.0
+                        "description": "Search radius in degrees (default: 0.01)",
+                        "default": 0.01
                     },
                     "max_results": {
                         "type": "integer",
@@ -166,96 +166,96 @@ async def list_tools() -> list[Tool]:
                 "required": ["ra", "dec"]
             }
         ),
-        Tool(
+        types.Tool(
             name="get_spectrum_by_id",
-            description="Retrieve a single spectrum by SPARCL ID",
+            description="Retrieve a specific DESI spectrum by its SPARCL ID.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "sparcl_id": {
                         "type": "string",
-                        "description": "SPARCL identifier for the spectrum"
+                        "description": "The SPARCL UUID for the spectrum"
                     },
                     "format": {
                         "type": "string",
-                        "description": "Return format: summary, full, or metadata_only",
-                        "enum": ["summary", "full", "metadata_only"],
+                        "description": "Format for returned data: 'summary' for basic info",
+                        "enum": ["summary"],
                         "default": "summary"
                     }
                 },
                 "required": ["sparcl_id"]
             }
         ),
-        Tool(
+        types.Tool(
             name="search_by_object_type",
-            description="Search for objects by type and basic properties",
+            description="Search for DESI objects by spectroscopic type (galaxy, quasar, star).",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "object_type": {
                         "type": "string",
-                        "description": "Object type to search for",
-                        "enum": ["GALAXY", "QSO", "STAR"]
+                        "description": "Type of astronomical object",
+                        "enum": ["galaxy", "quasar", "star"]
                     },
                     "redshift_min": {
                         "type": "number",
-                        "description": "Minimum redshift (optional)"
+                        "description": "Minimum redshift (z) for the search",
+                        "minimum": 0
                     },
                     "redshift_max": {
-                        "type": "number",
-                        "description": "Maximum redshift (optional)"
+                        "type": "number", 
+                        "description": "Maximum redshift (z) for the search",
+                        "minimum": 0
                     },
                     "magnitude_min": {
                         "type": "number",
-                        "description": "Minimum magnitude (optional)"
+                        "description": "Minimum magnitude for the search"
                     },
                     "magnitude_max": {
-                        "type": "number", 
-                        "description": "Maximum magnitude (optional)"
+                        "type": "number",
+                        "description": "Maximum magnitude for the search"
                     },
                     "max_results": {
                         "type": "integer",
-                        "description": "Maximum number of results (default: 1000)",
+                        "description": "Maximum number of results to return (default: 1000)",
                         "default": 1000
                     }
                 },
                 "required": ["object_type"]
             }
         ),
-        Tool(
+        types.Tool(
             name="search_in_region",
-            description="Search for spectra in a rectangular sky region",
+            description="Search for DESI objects within a rectangular sky region.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "ra_min": {
                         "type": "number",
-                        "description": "Minimum right ascension in degrees"
+                        "description": "Minimum Right Ascension in decimal degrees"
                     },
                     "ra_max": {
                         "type": "number",
-                        "description": "Maximum right ascension in degrees"
+                        "description": "Maximum Right Ascension in decimal degrees"
                     },
                     "dec_min": {
                         "type": "number",
-                        "description": "Minimum declination in degrees"
+                        "description": "Minimum Declination in decimal degrees"
                     },
                     "dec_max": {
                         "type": "number",
-                        "description": "Maximum declination in degrees"
+                        "description": "Maximum Declination in decimal degrees"
                     },
-                    "quality_filter": {
-                        "type": "string",
-                        "description": "Quality filter to apply",
-                        "enum": ["good", "all", "custom"],
-                        "default": "good"
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of results to return (default: 1000)",
+                        "default": 1000
                     }
                 },
                 "required": ["ra_min", "ra_max", "dec_min", "dec_max"]
             }
         )
     ]
-    return tools
 
 def format_search_results(found, show_limit=10):
     """Helper to format search results consistently."""
@@ -265,11 +265,33 @@ def format_search_results(found, show_limit=10):
     summary = f"Found {len(found.records)} objects:\n\n"
     
     for i, record in enumerate(found.records[:show_limit]):
-        obj_type = record.get('spectype', 'Unknown')
-        redshift = record.get('redshift', 'N/A')
-        ra = record.get('ra', 'N/A')
-        dec = record.get('dec', 'N/A')
-        sparcl_id = record.get('sparcl_id', record.get('specid', 'N/A'))
+        # Try different possible field names
+        obj_type = (record.get('spectype') or 
+                   record.get('SPECTYPE') or 
+                   record.get('spec_type') or 
+                   record.get('type') or 
+                   'Unknown')
+        
+        redshift = (record.get('redshift') or 
+                   record.get('z') or 
+                   record.get('Z') or 
+                   record.get('REDSHIFT') or 
+                   'N/A')
+        
+        ra = (record.get('ra') or 
+              record.get('RA') or 
+              record.get('target_ra') or 
+              'N/A')
+        
+        dec = (record.get('dec') or 
+               record.get('DEC') or 
+               record.get('target_dec') or 
+               'N/A')
+        
+        sparcl_id = (record.get('sparcl_id') or 
+                    record.get('specid') or 
+                    record.get('uuid') or 
+                    'N/A')
         
         summary += f"{i+1:2d}. {obj_type} at z={redshift}"
         if ra != 'N/A' and dec != 'N/A':
@@ -302,56 +324,32 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
     try:
         if name == "find_spectra_by_coordinates":
             ra = arguments["ra"]
-            dec = arguments["dec"] 
-            radius_arcsec = arguments.get("radius_arcsec", 10.0)
+            dec = arguments["dec"]
+            radius = arguments.get("radius", 0.01)  # Default 0.01 degrees
             max_results = arguments.get("max_results", 100)
             
-            # Validate coordinates
-            if not (0 <= ra <= 360):
-                return [types.TextContent(
-                    type="text",
-                    text="Error: RA must be between 0 and 360 degrees"
-                )]
-            if not (-90 <= dec <= 90):
-                return [types.TextContent(
-                    type="text", 
-                    text="Error: Dec must be between -90 and +90 degrees"
-                )]
-            
-            # Create search constraints for SPARCL
-            radius_deg = radius_arcsec / 3600.0
+            # Use constraints for SPARCL coordinate search
             constraints = {
-                'ra': [ra - radius_deg, ra + radius_deg],
-                'dec': [dec - radius_deg, dec + radius_deg]
+                'ra': [ra - radius, ra + radius],
+                'dec': [dec - radius, dec + radius]
             }
-            
             found = desi_server.sparcl_client.find(
                 constraints=constraints,
-                limit=max_results
+                outfields=['sparcl_id', 'ra', 'dec', 'redshift', 'spectype', 'survey', 'program']
             )
-            
-            result_text = f"Search near coordinates ({ra:.6f}, {dec:.6f}) with radius {radius_arcsec}\":\n\n"
-            result_text += format_search_results(found)
-            
-            return [types.TextContent(type="text", text=result_text)]
-        
+            return [types.TextContent(
+                type="text",
+                text=f"SPARCL search results:\n{format_search_results(found, max_results)}"
+            )]
+
         elif name == "get_spectrum_by_id":
             sparcl_id = arguments["sparcl_id"]
             format_type = arguments.get("format", "summary")
             
-            try:
-                retrieved = desi_server.sparcl_client.retrieve([sparcl_id])
-                
-                if not retrieved.records:
-                    return [types.TextContent(
-                        type="text",
-                        text=f"No spectrum found with ID: {sparcl_id}"
-                    )]
-                
-                spectrum = retrieved.records[0]
-                
-                if format_type == "summary":
-                    summary = f"""
+            spectrum = desi_server.sparcl_client.retrieve(uuid=sparcl_id)
+            
+            if format_type == "summary":
+                summary = f"""
 Spectrum Summary for ID: {sparcl_id}
 =====================================
 Object Type: {spectrum.get('spectype', 'Unknown')}
@@ -361,29 +359,14 @@ Coordinates: ({spectrum.get('ra', 'N/A')}, {spectrum.get('dec', 'N/A')})
 Survey Program: {spectrum.get('survey', 'N/A')}
 Data Release: {spectrum.get('data_release', 'N/A')}
 Target ID: {spectrum.get('targetid', 'N/A')}
-                    """
-                elif format_type == "metadata_only":
-                    # Return all available metadata fields
-                    summary = f"Metadata for spectrum {sparcl_id}:\n"
-                    for key, value in spectrum.items():
-                        if key != 'spectrum':  # Skip actual spectral data
-                            summary += f"{key}: {value}\n"
-                else:  # full format
-                    summary = f"Full spectrum data for {sparcl_id}:\n"
-                    summary += f"Metadata fields: {list(spectrum.keys())}\n"
-                    if 'spectrum' in spectrum:
-                        summary += "Includes: Wavelength and flux arrays\n"
-                    else:
-                        summary += "Note: Spectral arrays not included in this response\n"
-                
-                return [types.TextContent(type="text", text=summary.strip())]
-                
-            except Exception as e:
+                """
+                return [types.TextContent(type="text", text=summary)]
+            else:
                 return [types.TextContent(
-                    type="text",
-                    text=f"Error retrieving spectrum {sparcl_id}: {str(e)}"
+                    type="text", 
+                    text=f"Raw spectrum data available. Use format='summary' for details or access .flux, .wavelength arrays directly."
                 )]
-        
+
         elif name == "search_by_object_type":
             object_type = arguments["object_type"]
             redshift_min = arguments.get("redshift_min")
@@ -392,81 +375,65 @@ Target ID: {spectrum.get('targetid', 'N/A')}
             magnitude_max = arguments.get("magnitude_max")
             max_results = arguments.get("max_results", 1000)
             
-            constraints = {'spectype': object_type}
+            constraints = {'spectype': [object_type]}
             
-            # Add redshift constraints - use correct field name 'redshift'
+            # Add redshift constraints
             if redshift_min is not None or redshift_max is not None:
                 z_range = []
                 if redshift_min is not None:
                     z_range.append(redshift_min)
                 else:
-                    z_range.append(0.0)  # Default minimum
+                    z_range.append(0.0)  # Default min
                 if redshift_max is not None:
                     z_range.append(redshift_max)
                 else:
-                    z_range.append(10.0)  # Default maximum
+                    z_range.append(10.0)  # Default max
                 constraints['redshift'] = z_range
             
-            # Note: Magnitude constraints may need different field names depending on SPARCL schema
+            # Add magnitude constraints if provided
             if magnitude_min is not None or magnitude_max is not None:
-                # This is a placeholder - actual field names may vary
-                mag_field = 'mag_r'  # Assuming r-band magnitude
-                if magnitude_min is not None and magnitude_max is not None:
-                    constraints[mag_field] = [magnitude_min, magnitude_max]
+                mag_range = []
+                if magnitude_min is not None:
+                    mag_range.append(magnitude_min)
+                else:
+                    mag_range.append(10.0)  # Bright limit
+                if magnitude_max is not None:
+                    mag_range.append(magnitude_max)
+                else:
+                    mag_range.append(25.0)  # Faint limit
+                constraints['mag'] = mag_range
             
             found = desi_server.sparcl_client.find(
                 constraints=constraints,
-                limit=max_results
+                outfields=['sparcl_id', 'ra', 'dec', 'redshift', 'spectype', 'survey', 'program']
             )
-            
-            result_text = f"Search for {object_type} objects:\n"
-            if redshift_min or redshift_max:
-                result_text += f"Redshift range: {redshift_min or 'any'} - {redshift_max or 'any'}\n"
-            if magnitude_min or magnitude_max:
-                result_text += f"Magnitude range: {magnitude_min or 'any'} - {magnitude_max or 'any'}\n"
-            result_text += "\n" + format_search_results(found)
-            
-            return [types.TextContent(type="text", text=result_text)]
-        
+            return [types.TextContent(
+                type="text",
+                text=f"SPARCL search results:\n{format_search_results(found, max_results)}"
+            )]
+
         elif name == "search_in_region":
             ra_min = arguments["ra_min"]
             ra_max = arguments["ra_max"]
             dec_min = arguments["dec_min"]
             dec_max = arguments["dec_max"]
-            quality_filter = arguments.get("quality_filter", "good")
+            max_results = arguments.get("max_results", 1000)
             
-            # Validate coordinate ranges
-            if ra_min >= ra_max:
-                return [types.TextContent(
-                    type="text",
-                    text="Error: ra_min must be less than ra_max"
-                )]
-            if dec_min >= dec_max:
-                return [types.TextContent(
-                    type="text",
-                    text="Error: dec_min must be less than dec_max"
-                )]
-            
+            # Use constraints for SPARCL region search
             constraints = {
                 'ra': [ra_min, ra_max],
                 'dec': [dec_min, dec_max]
             }
             
-            if quality_filter == "good":
-                # Add DESI quality filtering - use correct field name 'redshift_warning'
-                constraints['redshift_warning'] = [0, 0]
+            found = desi_server.sparcl_client.find(
+                constraints=constraints,
+                outfields=['sparcl_id', 'ra', 'dec', 'redshift', 'spectype', 'survey', 'program']
+            )
             
-            found = desi_server.sparcl_client.find(constraints=constraints)
-            
-            area_sq_deg = (ra_max - ra_min) * (dec_max - dec_min)
-            result_text = f"Search in sky region:\n"
-            result_text += f"RA: {ra_min:.4f} - {ra_max:.4f} degrees\n"
-            result_text += f"Dec: {dec_min:.4f} - {dec_max:.4f} degrees\n"
-            result_text += f"Area: {area_sq_deg:.2f} square degrees\n"
-            result_text += f"Quality filter: {quality_filter}\n\n"
-            result_text += format_search_results(found)
-            
-            return [types.TextContent(type="text", text=result_text)]
+            return [types.TextContent(
+                type="text",
+                text=f"SPARCL region search results:\n{format_search_results(found, max_results)}"
+            )]
         
         else:
             return [types.TextContent(

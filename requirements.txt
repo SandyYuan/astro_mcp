@@ -7,5 +7,9 @@ anthropic
 # Environment variable loading
 python-dotenv
 
-# DESI data access via SPARCL
-sparclclient>=1.0.0 
+# DESI data access via SPARCL (primary)
+sparclclient>=1.0.0
+
+# TAP access for fallback
+requests
+astropy 

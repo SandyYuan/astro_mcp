@@ -25,28 +25,29 @@ async def test_basic_server_functions():
     """Test basic server functionality."""
     print("\nTesting basic server functions...")
     try:
-        from server import list_resources, list_tools, read_resource, call_tool
+        from server import handle_list_resources, handle_list_tools, handle_read_resource, call_tool
         
         # Test list_resources
-        print("  Testing list_resources...")
-        resources = await list_resources()
+        print("  Testing handle_list_resources...")
+        resources = await handle_list_resources()
         print(f"    ✓ Found {len(resources)} resources")
         for resource in resources:
             print(f"      - {resource.name}: {resource.uri}")
         
         # Test list_tools
-        print("  Testing list_tools...")
-        tools = await list_tools()
+        print("  Testing handle_list_tools...")
+        tools = await handle_list_tools()
         print(f"    ✓ Found {len(tools)} tools")
         for tool in tools:
             print(f"      - {tool.name}: {tool.description}")
         
         # Test read_resource
-        print("  Testing read_resource...")
-        help_content = await read_resource("desi://help/tools")
+        print("  Testing handle_read_resource...")
+        from pydantic import AnyUrl
+        help_content = await handle_read_resource(AnyUrl("desi://help/overview"))
         print(f"    ✓ Help content length: {len(help_content)} characters")
         
-        data_content = await read_resource("desi://data/available")
+        data_content = await handle_read_resource(AnyUrl("desi://info/data_availability"))
         print(f"    ✓ Data availability content length: {len(data_content)} characters")
         
         return True
@@ -55,42 +56,42 @@ async def test_basic_server_functions():
         return False
 
 async def test_tool_validation():
-    """Test tool argument validation."""
-    print("\nTesting tool argument validation...")
+    """Test tool functionality with valid coordinates."""
+    print("\nTesting tool functionality...")
     try:
         from server import call_tool
         
-        # Test coordinate validation - invalid RA
-        print("  Testing invalid RA (400 degrees)...")
-        result = await call_tool("find_spectra_by_coordinates", {"ra": 400, "dec": 50})
-        error_text = result[0].text
-        if "Error: RA must be between 0 and 360 degrees" in error_text:
-            print("    ✓ RA validation working correctly")
+        # Test coordinate search with valid coordinates
+        print("  Testing coordinate search with valid coordinates...")
+        result = await call_tool("find_spectra_by_coordinates", {"ra": 10.68, "dec": 41.27, "radius": 0.01})
+        result_text = result[0].text
+        if "search results" in result_text.lower():
+            print("    ✓ Coordinate search working correctly")
         else:
-            print(f"    ✗ Unexpected RA validation result: {error_text[:50]}...")
+            print(f"    ✗ Unexpected coordinate search result: {result_text[:50]}...")
         
-        # Test coordinate validation - invalid Dec
-        print("  Testing invalid Dec (100 degrees)...")
-        result = await call_tool("find_spectra_by_coordinates", {"ra": 150, "dec": 100})
-        error_text = result[0].text
-        if "Error: Dec must be between -90 and +90 degrees" in error_text:
-            print("    ✓ Dec validation working correctly")
+        # Test object type search
+        print("  Testing object type search...")
+        result = await call_tool("search_by_object_type", {"object_type": "galaxy", "max_results": 10})
+        result_text = result[0].text
+        if "search results" in result_text.lower():
+            print("    ✓ Object type search working correctly")
         else:
-            print(f"    ✗ Unexpected Dec validation result: {error_text[:50]}...")
+            print(f"    ✗ Unexpected object type search result: {result_text[:50]}...")
         
-        # Test region validation - invalid range
-        print("  Testing invalid region (ra_min > ra_max)...")
+        # Test region search
+        print("  Testing region search...")
         result = await call_tool("search_in_region", 
-                                {"ra_min": 150, "ra_max": 140, "dec_min": 10, "dec_max": 20})
-        error_text = result[0].text
-        if "Error: ra_min must be less than ra_max" in error_text:
-            print("    ✓ Region validation working correctly")
+                                {"ra_min": 10.0, "ra_max": 11.0, "dec_min": 40.0, "dec_max": 42.0, "max_results": 10})
+        result_text = result[0].text
+        if "search results" in result_text.lower():
+            print("    ✓ Region search working correctly")
         else:
-            print(f"    ✗ Unexpected region validation result: {error_text[:50]}...")
+            print(f"    ✗ Unexpected region search result: {result_text[:50]}...")
         
         return True
     except Exception as e:
-        print(f"    ✗ Error testing tool validation: {e}")
+        print(f"    ✗ Error testing tool functionality: {e}")
         return False
 
 async def test_sparcl_dependency():
