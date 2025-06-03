@@ -207,7 +207,7 @@ async def interactive_mode(client: ClaudeMCPClient):
     print("="*60)
     print("Ask questions about DESI astronomical data in natural language!")
     print("Examples:")
-    print("  • 'find the nearest galaxy to ra=10.68, dec=41.27'")
+    print("  • 'find the nearest galaxy to ra=9.9443, dec=41.7221'")
     print("  • 'search for quasars with redshift between 2 and 3'")
     print("  • 'what objects are in the region RA 150-151, Dec 2-3?'")
     print("\nType 'quit' to exit.\n")
@@ -243,10 +243,10 @@ async def run_example_queries(client: ClaudeMCPClient):
     print("="*60)
     
     example_queries = [
-        "find the nearest galaxy to ra=10.68, dec=41.27, and return its spectrum and redshift",
-        "search for high redshift quasars between z=2.0 and z=3.0, limit to 5 results",
-        "what objects are in the sky region from RA 150 to 151 degrees and Dec 2 to 3 degrees?",
-        "find stars near coordinates ra=45.2, dec=-12.8 within 30 arcseconds"
+        "find the nearest galaxy to ra=9.9443, dec=41.7221, and return its spectrum and redshift",
+        # "search for high redshift quasars between z=2.0 and z=3.0, limit to 5 results",
+        # "what objects are in the sky region from RA 150 to 151 degrees and Dec 2 to 3 degrees?",
+        # "find stars near coordinates ra=45.2, dec=-12.8 within 30 arcseconds"
     ]
     
     for i, query in enumerate(example_queries, 1):
