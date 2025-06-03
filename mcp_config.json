@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "desi-basic": {
+      "command": "python",
+      "args": ["server.py"],
+      "cwd": ".",
+      "env": {}
+    }
+  }
+} 

@@ -1,0 +1,5 @@
+# MCP Server dependencies
+mcp
+
+# DESI data access (optional - install manually if needed)
+# sparclclient>=1.0.0 
