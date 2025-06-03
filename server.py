@@ -1,10 +1,27 @@
 #!/usr/bin/env python3
 
+"""
+DESI MCP Server - Basic Implementation
+
+This is a Model Context Protocol (MCP) server that provides access to DESI 
+(Dark Energy Spectroscopic Instrument) data through the SPARCL client.
+
+Features:
+- Search for spectra by coordinates
+- Retrieve specific spectra by ID  
+- Search by object type (galaxy, quasar, star)
+- Query rectangular sky regions
+- Basic data validation and error handling
+
+Usage:
+    python server.py
+"""
+
 import asyncio
 import logging
 from typing import Any, Sequence
 
-from mcp.server import Server
+from mcp.server import Server, NotificationOptions
 from mcp.server.models import InitializationOptions
 from mcp.types import (
     Resource,
@@ -25,7 +42,7 @@ logger = logging.getLogger("desi-mcp-server")
 server = Server("desi-basic")
 
 try:
-    import sparclclient
+    from sparcl.client import SparclClient
     SPARCL_AVAILABLE = True
     logger.info("SPARCL client is available")
 except ImportError:
@@ -37,7 +54,7 @@ class DESIMCPServer:
         self.sparcl_client = None
         if SPARCL_AVAILABLE:
             try:
-                self.sparcl_client = sparclclient.SparclClient()
+                self.sparcl_client = SparclClient()
                 logger.info("SPARCL client initialized successfully")
             except Exception as e:
                 logger.error(f"Failed to initialize SPARCL client: {e}")
@@ -249,10 +266,10 @@ def format_search_results(found, show_limit=10):
     
     for i, record in enumerate(found.records[:show_limit]):
         obj_type = record.get('spectype', 'Unknown')
-        redshift = record.get('z', 'N/A')
+        redshift = record.get('redshift', 'N/A')
         ra = record.get('ra', 'N/A')
         dec = record.get('dec', 'N/A')
-        sparcl_id = record.get('sparcl_id', record.get('id', 'N/A'))
+        sparcl_id = record.get('sparcl_id', record.get('specid', 'N/A'))
         
         summary += f"{i+1:2d}. {obj_type} at z={redshift}"
         if ra != 'N/A' and dec != 'N/A':
@@ -338,8 +355,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
 Spectrum Summary for ID: {sparcl_id}
 =====================================
 Object Type: {spectrum.get('spectype', 'Unknown')}
-Redshift: {spectrum.get('z', 'N/A')}
-Redshift Warning: {spectrum.get('zwarn', 'N/A')}
+Redshift: {spectrum.get('redshift', 'N/A')}
+Redshift Warning: {spectrum.get('redshift_warning', 'N/A')}
 Coordinates: ({spectrum.get('ra', 'N/A')}, {spectrum.get('dec', 'N/A')})
 Survey Program: {spectrum.get('survey', 'N/A')}
 Data Release: {spectrum.get('data_release', 'N/A')}
@@ -377,7 +394,7 @@ Target ID: {spectrum.get('targetid', 'N/A')}
             
             constraints = {'spectype': object_type}
             
-            # Add redshift constraints
+            # Add redshift constraints - use correct field name 'redshift'
             if redshift_min is not None or redshift_max is not None:
                 z_range = []
                 if redshift_min is not None:
@@ -388,7 +405,7 @@ Target ID: {spectrum.get('targetid', 'N/A')}
                     z_range.append(redshift_max)
                 else:
                     z_range.append(10.0)  # Default maximum
-                constraints['z'] = z_range
+                constraints['redshift'] = z_range
             
             # Note: Magnitude constraints may need different field names depending on SPARCL schema
             if magnitude_min is not None or magnitude_max is not None:
@@ -436,8 +453,8 @@ Target ID: {spectrum.get('targetid', 'N/A')}
             }
             
             if quality_filter == "good":
-                # Add DESI quality filtering - no redshift warnings
-                constraints['zwarn'] = [0, 0]
+                # Add DESI quality filtering - use correct field name 'redshift_warning'
+                constraints['redshift_warning'] = [0, 0]
             
             found = desi_server.sparcl_client.find(constraints=constraints)
             
@@ -474,8 +491,8 @@ async def main():
                 server_name="desi-basic",
                 server_version="0.1.0",
                 capabilities=server.get_capabilities(
-                    notification_options=None,
-                    experimental_capabilities=None,
+                    notification_options=NotificationOptions(),
+                    experimental_capabilities={}
                 ),
             ),
         )

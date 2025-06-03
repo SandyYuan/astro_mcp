@@ -1,5 +1,11 @@
 # MCP Server dependencies
 mcp
 
-# DESI data access (optional - install manually if needed)
-# sparclclient>=1.0.0 
+# Claude AI integration
+anthropic
+
+# Environment variable loading
+python-dotenv
+
+# DESI data access via SPARCL
+sparclclient>=1.0.0 
