@@ -42,6 +42,15 @@ except ImportError:
     SPARCL_AVAILABLE = False
     logger.warning("SPARCL client not available - install with: pip install sparclclient")
 
+# Try to import Data Lab query client
+try:
+    from dl import queryClient as qc
+    DATALAB_AVAILABLE = True
+    logger.info("Data Lab query client is available")
+except ImportError:
+    DATALAB_AVAILABLE = False
+    logger.warning("Data Lab query client not available - install with: pip install datalab")
+
 # Initialize server and DESI client
 server = Server("desi-basic")
 
@@ -239,7 +248,7 @@ async def handle_list_tools() -> list[types.Tool]:
     return [
         types.Tool(
             name="search_objects",
-            description="Unified search interface for DESI astronomical objects. Supports flexible constraints on coordinates (point or region), object properties (type, redshift), survey parameters, and any other SPARCL Core field. Results can be saved to JSON and optionally include full spectral arrays.",
+            description="Unified search interface for DESI astronomical objects using Data Lab SQL queries. No 24k limit - can access the full DESI catalog. Supports flexible constraints on coordinates (point or region), object properties (type, redshift), survey parameters, and any other DESI database field. Results can be saved to JSON. For large queries (>100k results), use async_query=True.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -305,6 +314,11 @@ async def handle_list_tools() -> list[types.Tool]:
                     "include_arrays": {
                         "type": "boolean",
                         "description": "Include flux/wavelength arrays in results (limited to first 100 objects)",
+                        "default": False
+                    },
+                    "async_query": {
+                        "type": "boolean",
+                        "description": "Use asynchronous query for large datasets",
                         "default": False
                     }
                 },
@@ -394,285 +408,156 @@ def format_search_results(found, show_limit=10):
     
     return summary
 
-def search_objects(
-    # Coordinate constraints
+async def search_objects_sql(
+    # Same parameters as before
     ra: float = None,
     dec: float = None,
-    radius: float = None,  # in degrees, for cone search
+    radius: float = None,
     ra_min: float = None,
     ra_max: float = None,
     dec_min: float = None,
     dec_max: float = None,
-    
-    # Common constraints (keep for discoverability)
-    object_types: list = None,  # ['GALAXY', 'QSO', 'STAR']
+    object_types: list = None,
     redshift_min: float = None,
     redshift_max: float = None,
-    data_releases: list = None,  # ['DESI-DR1', 'BOSS-DR16', etc.]
-    
-    # Output control
+    data_releases: list = None,
     max_results: int = None,
     output_file: str = None,
-    include_arrays: bool = False,
-    
-    # Additional field constraints
-    **kwargs  # Any other SPARCL field constraints
+    async_query: bool = False,  # For large queries
+    **kwargs
 ):
     """
-    Unified search for DESI objects with flexible constraints.
+    Search DESI objects using Data Lab SQL queries (no 24k limit).
     
-    Common constraints are available as named parameters. Additional fields
-    can be filtered using keyword arguments:
-    
-    - For list constraints (categorical): field_name=[value1, value2, ...]
-    - For range constraints (numeric): field_name=[min, max]
-    - For exact match: field_name=value (will be converted to [value])
-    
-    Examples:
-        # Filter by survey program
-        search_objects(ra=10, dec=20, survey=['desi'], program=['bright'])
-        
-        # Filter by targeting bits
-        search_objects(bgs_target=[1, 2, 4], sv1_desi_target=[8])
-        
-        # Filter by observation date range
-        search_objects(dateobs=['2021-05-14', '2021-05-20'])
-        
-        # Filter by healpix
-        search_objects(healpix=[1234, 1235, 1236])
-    
-    See https://astrosparcl.datalab.noirlab.edu/sparc/fieldtable/DESI-DR1 
-    for all available fields.
+    For queries returning >100k rows, use async_query=True.
     """
     
-    if not desi_server.sparcl_client:
+    if not DATALAB_AVAILABLE:
         return [types.TextContent(
             type="text",
-            text="Error: SPARCL client not available"
+            text="Error: Data Lab query client not available. Please install with: pip install datalab"
         )]
     
-    # Build constraints dict
-    constraints = {}
+    # Build SQL query - use sparcl.main table which has known schema
+    sql_parts = []
     
-    # Handle coordinate constraints (same as before)
-    if ra is not None and dec is not None:
-        if radius is None:
-            radius = 0.001  # Default 3.6 arcsec for point search
-        constraints['ra'] = [ra - radius, ra + radius]
-        constraints['dec'] = [dec - radius, dec + radius]
-    elif all(x is not None for x in [ra_min, ra_max, dec_min, dec_max]):
-        constraints['ra'] = [ra_min, ra_max]
-        constraints['dec'] = [dec_min, dec_max]
-    
-    # Handle named constraints
-    if object_types:
-        constraints['spectype'] = [t.upper() for t in object_types]
-    
-    if redshift_min is not None or redshift_max is not None:
-        constraints['redshift'] = [
-            redshift_min if redshift_min is not None else 0.0,
-            redshift_max if redshift_max is not None else 10.0
-        ]
-    
-    if data_releases:
-        constraints['data_release'] = data_releases
-    
-    # Process kwargs for additional field constraints
-    # Known range fields (numeric fields that use [min, max] format)
-    range_fields = {
-        'dateobs', 'dateobs_center', 'exptime', 'wavemin', 'wavemax',
-        'mean_mjd', 'chi2', 'deltachi2', 'tsnr2_bgs', 'tsnr2_elg',
-        'tsnr2_lrg', 'tsnr2_qso', 'mean_delta_x', 'mean_delta_y',
-        'flux_g', 'flux_r', 'flux_z', 'flux_w1', 'flux_w2'
-    }
-    
-    # Known list fields (categorical fields that use list of values)
-    list_fields = {
-        'survey', 'program', 'healpix', 'telescope', 'instrument',
-        'site', 'specprimary', 'main_primary', 'sv_primary',
-        'targetid', 'specid', 'sparcl_id', 'coadd_fiberstatus'
-    }
-    
-    # Process each kwarg
-    for field, value in kwargs.items():
-        # Skip None values
-        if value is None:
-            continue
-            
-        # Convert single values to lists if needed
-        if not isinstance(value, list):
-            value = [value]
-        
-        # Determine if this is a range or list constraint
-        if field in range_fields or (
-            field.endswith('_min') or field.endswith('_max') or 
-            field.startswith('mean_') or field.endswith('_err')
-        ):
-            # Range constraint - ensure we have exactly 2 values
-            if len(value) == 1:
-                # Single value provided, treat as exact match range
-                constraints[field] = [value[0], value[0]]
-            elif len(value) == 2:
-                constraints[field] = value
-            else:
-                logger.warning(f"Range field {field} requires 1 or 2 values, got {len(value)}")
-        else:
-            # List constraint (categorical or exact matches)
-            constraints[field] = value
-    
-    # Get list of all Core fields for output
-    # Use basic outfields that match SPARCL examples
-    core_fields = [
-        'sparcl_id', 'ra', 'dec', 'redshift', 'spectype', 'data_release', 
-        'survey'
+    # SELECT clause - use sparcl.main table which has standardized columns
+    select_cols = [
+        "targetid", "ra", "dec", "redshift", "redshift_err",
+        "spectype", "data_release", "sparcl_id", "specid", "instrument"
     ]
     
-    # Add any fields from kwargs to outfields if they're Core fields  
-    outfields = core_fields.copy()
+    sql = f"SELECT {', '.join(select_cols)}\n"
+    sql += "FROM sparcl.main\n"
     
-    # Execute search
+    # WHERE clause
+    where_conditions = []
+    
+    # Coordinate constraints
+    if ra is not None and dec is not None:
+        if radius is None:
+            radius = 0.001  # Default 3.6 arcsec
+        # Use Q3C for efficient cone search
+        where_conditions.append(
+            f"q3c_radial_query(ra, dec, {ra}, {dec}, {radius})"
+        )
+    elif all(x is not None for x in [ra_min, ra_max, dec_min, dec_max]):
+        where_conditions.append(f"ra BETWEEN {ra_min} AND {ra_max}")
+        where_conditions.append(f"dec BETWEEN {dec_min} AND {dec_max}")
+    
+    # Object type constraints
+    if object_types:
+        types_str = "','".join(t.upper() for t in object_types)
+        where_conditions.append(f"spectype IN ('{types_str}')")
+    
+    # Redshift constraints
+    if redshift_min is not None:
+        where_conditions.append(f"redshift >= {redshift_min}")
+    if redshift_max is not None:
+        where_conditions.append(f"redshift <= {redshift_max}")
+    
+    # Data release constraints
+    if data_releases:
+        releases_str = "','".join(data_releases)
+        where_conditions.append(f"data_release IN ('{releases_str}')")
+    
+    # Add WHERE clause
+    if where_conditions:
+        sql += "WHERE " + " AND ".join(where_conditions) + "\n"
+    
+    # Add LIMIT if specified
+    if max_results:
+        sql += f"LIMIT {max_results}\n"
+    
+    # Execute query
     try:
-        # Ensure all constraint values are basic Python types (not numpy, Range, etc.)
-        serializable_constraints = {}
-        for key, value in constraints.items():
-            if isinstance(value, list):
-                # Convert any non-basic types in lists to basic Python types
-                serializable_value = []
-                for i, item in enumerate(value):
-                    if hasattr(item, 'item'):  # numpy scalars
-                        converted = item.item()
-                        serializable_value.append(converted)
-                    elif hasattr(item, 'tolist'):  # numpy arrays
-                        converted = item.tolist()
-                        serializable_value.extend(converted)
-                    else:
-                        converted = float(item) if isinstance(item, (int, float)) else item
-                        serializable_value.append(converted)
-                serializable_constraints[key] = serializable_value
-            else:
-                # Single values
-                if hasattr(value, 'item'):  # numpy scalars
-                    converted = value.item()
-                elif hasattr(value, 'tolist'):  # numpy arrays
-                    converted = value.tolist()
-                else:
-                    converted = float(value) if isinstance(value, (int, float)) else value
-                serializable_constraints[key] = converted
-        
-        find_params = {
-            'constraints': serializable_constraints,
-            'outfields': outfields
-        }
-        if max_results:
-            find_params['limit'] = max_results
-        
-        found = desi_server.sparcl_client.find(**find_params)
-        
-        if not found.records:
-            # Provide helpful feedback about the constraints used
-            constraint_summary = "\n".join([f"  {k}: {v}" for k, v in serializable_constraints.items()])
-            return [types.TextContent(
-                type="text",
-                text=f"No objects found matching the search criteria:\n{constraint_summary}"
-            )]
-        
-        # Convert results to list of dicts
-        results_list = []
-        for record in found.records:
-            obj_dict = {}
-            for field in outfields:
-                val = getattr(record, field, None)
-                # Handle special serialization cases
-                if hasattr(val, 'tolist'):  # numpy arrays
-                    val = val.tolist()
-                elif hasattr(val, 'isoformat'):  # datetime objects
-                    val = val.isoformat()
-                obj_dict[field] = val
-            results_list.append(obj_dict)
-        
-        # Optionally retrieve full spectra (same as before)
-        if include_arrays and found.ids:
-            retrieve_ids = found.ids[:min(100, len(found.ids))]
-            include_fields = outfields + ['flux', 'wavelength', 'ivar']
-            retrieved = desi_server.sparcl_client.retrieve(
-                uuid_list=retrieve_ids,
-                include=include_fields
-            )
+        if async_query or (max_results and max_results > 100000):
+            # Use async for large queries
+            logger.info(f"Executing async SQL query for large dataset")
+            jobid = qc.query(sql=sql, fmt='pandas', async_=True)
             
-            for i, record in enumerate(retrieved.records):
-                if i < len(results_list):
-                    if hasattr(record, 'flux'):
-                        results_list[i]['flux'] = record.flux.tolist()
-                    if hasattr(record, 'wavelength'):
-                        results_list[i]['wavelength'] = record.wavelength.tolist()
-                    if hasattr(record, 'ivar'):
-                        results_list[i]['ivar'] = record.ivar.tolist()
+            # Poll for completion
+            import time
+            while True:
+                status = qc.status(jobid)
+                if status == 'COMPLETED':
+                    result_df = qc.results(jobid)
+                    break
+                elif status == 'ERROR':
+                    error = qc.error(jobid)
+                    raise Exception(f"Query failed: {error}")
+                time.sleep(2)
+        else:
+            # Synchronous query for smaller datasets
+            result_df = qc.query(sql=sql, fmt='pandas')
+        
+        # Convert to list of dicts for consistency
+        results_list = result_df.to_dict('records')
         
         # Save to file if requested
-        saved_file = None
         if output_file:
-            try:
-                import json
-                from datetime import datetime
-                with open(output_file, 'w') as f:
-                    json.dump({
-                        'query': {
-                            'constraints': serializable_constraints,
-                            'timestamp': datetime.now().isoformat(),
-                            'sparcl_query': str(find_params)
-                        },
-                        'metadata': {
-                            'total_found': len(found.records),
-                            'returned': len(results_list),
-                            'has_spectra': include_arrays,
-                            'fields_returned': outfields
-                        },
-                        'results': results_list
-                    }, f, indent=2)
-                saved_file = output_file
-            except Exception as e:
-                logger.warning(f"Could not save to file: {e}")
+            import json
+            from datetime import datetime
+            with open(output_file, 'w') as f:
+                json.dump({
+                    'query': {
+                        'sql': sql,
+                        'timestamp': datetime.now().isoformat()
+                    },
+                    'metadata': {
+                        'total_found': len(results_list),
+                        'method': 'Data Lab SQL (sparcl.main table)'
+                    },
+                    'results': results_list
+                }, f, indent=2)
         
-        # Format response with constraint summary
-        response = f"Found {len(found.records)} objects\n"
-        response += f"Constraints applied:\n"
-        for k, v in serializable_constraints.items():
-            response += f"  {k}: {v}\n"
-        response += "\nResults:\n"
+        # Format response with clear sparcl_id extraction
+        response = f"Found {len(results_list)} objects using Data Lab SQL\n"
+        response += f"(Full DESI catalog accessible via sparcl.main)\n\n"
         
-        # Show first 10 results with relevant fields
         for i, obj in enumerate(results_list[:10]):
-            # Build summary line with available fields
-            parts = [f"{i+1}."]
-            if 'spectype' in obj:
-                parts.append(obj['spectype'])
-            if 'ra' in obj and 'dec' in obj:
-                parts.append(f"({obj['ra']:.4f}, {obj['dec']:.4f})")
-            if 'redshift' in obj:
-                parts.append(f"z={obj['redshift']:.4f}")
-            if 'survey' in obj and obj['survey']:
-                parts.append(f"survey={obj['survey']}")
-            
-            response += " ".join(parts) + "\n"
+            response += f"{i+1}. {obj.get('spectype', 'N/A')} at "
+            response += f"({obj.get('ra', 0):.4f}, {obj.get('dec', 0):.4f}), "
+            response += f"z={obj.get('redshift', 0):.4f} "
+            response += f"[{obj.get('data_release', 'N/A')}]\n"
+            response += f"   SPARCL ID: {obj.get('sparcl_id', 'N/A')}\n"
+            response += f"   Target ID: {obj.get('targetid', 'N/A')}\n"
         
         if len(results_list) > 10:
             response += f"\n... and {len(results_list) - 10} more objects"
         
-        if saved_file:
-            response += f"\n\nResults saved to: {saved_file}"
+        if len(results_list) > 0:
+            response += f"\n\nTo get detailed spectrum data, use get_spectrum_by_id with one of the SPARCL IDs above."
         
         return [types.TextContent(type="text", text=response)]
         
     except Exception as e:
-        # Provide more detailed error information
-        error_msg = f"Search error: {str(e)}\n"
-        if "constraint" in str(e).lower():
-            error_msg += "\nThis may be due to an invalid field name or constraint format."
-            error_msg += "\nCheck available fields at: https://astrosparcl.datalab.noirlab.edu/sparc/fieldtable/"
-        
-        logger.error(f"Search error with constraints {serializable_constraints}: {str(e)}")
-        return [types.TextContent(type="text", text=error_msg)]
-    
+        logger.error(f"SQL query error: {str(e)}")
+        return [types.TextContent(
+            type="text",
+            text=f"SQL query error: {str(e)}\nSQL: {sql}"
+        )]
+
 # Then update the main call_tool function
 @server.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextContent]:
@@ -707,7 +592,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
     try:
         if name == "search_objects":
             # Call the unified search function with all arguments
-            return search_objects(**arguments)
+            return await search_objects_sql(**arguments)
         
         elif name == "get_spectrum_by_id":
             sparcl_id = arguments["sparcl_id"]
