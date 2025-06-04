@@ -524,7 +524,7 @@ def search_objects(
     # Use basic outfields that match SPARCL examples
     core_fields = [
         'sparcl_id', 'ra', 'dec', 'redshift', 'spectype', 'data_release', 
-        'survey', 'program'
+        'survey'
     ]
     
     # Add any fields from kwargs to outfields if they're Core fields  
@@ -652,8 +652,6 @@ def search_objects(
                 parts.append(f"z={obj['redshift']:.4f}")
             if 'survey' in obj and obj['survey']:
                 parts.append(f"survey={obj['survey']}")
-            if 'program' in obj and obj['program']:
-                parts.append(f"prog={obj['program']}")
             
             response += " ".join(parts) + "\n"
         
