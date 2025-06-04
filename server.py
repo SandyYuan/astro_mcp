@@ -750,19 +750,120 @@ async def search_objects_sql(
 @server.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextContent]:
     """
-    Execute DESI data access tools with parameter validation and error handling.
+    Execute DESI astronomical data access tools with comprehensive parameter validation and error handling.
     
-    Supported Tools:
+    This function serves as the main entry point for all DESI data operations through the MCP server.
+    It provides access to the Dark Energy Spectroscopic Instrument (DESI) survey data via two methods:
+    Data Lab SQL queries (default, faster) and SPARCL client (backup, cross-survey).
+    
+    Available Tools:
+    ===============
     
     1. "search_objects"
-       - Unified search interface for all DESI objects
-       - Supports coordinate, object type, redshift, and survey constraints
-       - Accepts any SPARCL Core field as additional filters via kwargs
-       - Can save results to JSON and optionally include spectral arrays
+       - Primary tool for searching DESI astronomical objects
+       - Supports multiple search modes: nearest object, cone search, box search
+       - Flexible filtering by object type, redshift, data release
+       - Can save results to JSON files with optional spectral arrays
+       - Uses Data Lab SQL by default for speed, SPARCL client for cross-survey searches
        
-    2. "get_spectrum_by_id"  
-       - Retrieves detailed spectrum information by SPARCL UUID
-       - Returns formatted summary or full spectral data
+    2. "get_spectrum_by_id"
+       - Retrieves detailed spectrum information using SPARCL UUID
+       - Returns metadata summary or full spectral data (wavelength/flux arrays)
+       - Saves complete spectral data to JSON files for analysis
+    
+    Search Methods:
+    ==============
+    
+    Data Lab SQL (Default):
+    - Fast queries against sparcl.main table
+    - Access to full DESI catalog with no row limits
+    - Efficient distance-sorted coordinate searches using Q3C indexing
+    - Supports asynchronous queries for large datasets (>100k results)
+    
+    SPARCL Client (Backup):
+    - Cross-survey searches: DESI + BOSS + SDSS
+    - Box-constraint based spatial searches
+    - Broader data coverage but potentially slower
+    
+    Coordinate Search Modes:
+    =======================
+    
+    1. Nearest Object Search:
+       - Parameters: ra, dec (no radius specified)
+       - Behavior: Finds closest object within 0.1° search radius
+       - Sorting: Always sorted by distance (nearest first)
+       
+    2. Cone Search:
+       - Parameters: ra, dec, radius
+       - Behavior: Finds all objects within specified radius
+       - Sorting: Always sorted by distance from search center
+       
+    3. Box Search:
+       - Parameters: ra_min, ra_max, dec_min, dec_max
+       - Behavior: Rectangular region search
+       - Sorting: Database order (no distance calculation)
+    
+    Args:
+        name (str): Tool name to execute. Must be one of:
+                   - "search_objects": Search for astronomical objects
+                   - "get_spectrum_by_id": Retrieve spectrum by SPARCL ID
+        
+        arguments (dict[str, Any]): Tool-specific parameters. For search_objects:
+            Coordinate Parameters:
+                ra (float): Right Ascension in decimal degrees (0-360)
+                dec (float): Declination in decimal degrees (-90 to +90)
+                radius (float): Search radius in degrees (optional for nearest search)
+                ra_min, ra_max, dec_min, dec_max (float): Box search boundaries
+            
+            Object Filters:
+                object_types (list[str]): Filter by type ['GALAXY', 'QSO', 'STAR']
+                redshift_min, redshift_max (float): Redshift range constraints
+                data_releases (list[str]): Specific data releases to search
+            
+            Output Control:
+                max_results (int): Maximum number of results to return
+                output_file (str): JSON filename to save results
+                async_query (bool): Use async for large queries (>100k results)
+                use_sparcl_client (bool): Use SPARCL instead of SQL (default: False)
+            
+            For get_spectrum_by_id:
+                sparcl_id (str): SPARCL UUID identifier (required)
+                format (str): 'summary' for metadata, 'full' for spectral arrays
+    
+    Returns:
+        list[types.TextContent]: Formatted response containing:
+            - Search results with object coordinates, redshifts, types
+            - SPARCL IDs for detailed spectrum retrieval
+            - Distance information for coordinate searches
+            - Error messages for failed operations
+    
+    Raises:
+        Exception: Propagated from underlying SPARCL or Data Lab operations
+                  with descriptive error messages for debugging
+    
+    Examples:
+        # Find nearest galaxy
+        await call_tool("search_objects", {
+            "ra": 10.68, "dec": 41.27, "object_types": ["GALAXY"]
+        })
+        
+        # Cone search for quasars
+        await call_tool("search_objects", {
+            "ra": 150.0, "dec": 2.0, "radius": 0.1, 
+            "object_types": ["QSO"], "redshift_min": 2.0
+        })
+        
+        # Get full spectrum data
+        await call_tool("get_spectrum_by_id", {
+            "sparcl_id": "1270d3c4-9d36-11ee-94ad-525400ad1336",
+            "format": "full"
+        })
+    
+    Notes:
+        - All coordinate searches automatically sort by distance for accurate "nearest" results
+        - SPARCL client fallback ensures cross-survey compatibility when needed
+        - Large datasets (>100k results) should use async_query=True
+        - Output files contain query metadata for reproducibility
     """
     
     if not SPARCL_AVAILABLE:
