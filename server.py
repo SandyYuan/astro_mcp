@@ -320,6 +320,11 @@ async def handle_list_tools() -> list[types.Tool]:
                         "type": "boolean",
                         "description": "Use asynchronous query for large datasets",
                         "default": False
+                    },
+                    "use_sparcl_client": {
+                        "type": "boolean",
+                        "description": "Use SPARCL client for cross-survey searches (DESI + BOSS + SDSS)",
+                        "default": False
                     }
                 },
                 "additionalProperties": True  # This allows kwargs!
@@ -408,6 +413,166 @@ def format_search_results(found, show_limit=10):
     
     return summary
 
+async def search_objects_sparcl(
+    ra: float = None,
+    dec: float = None,
+    radius: float = None,
+    ra_min: float = None,
+    ra_max: float = None,
+    dec_min: float = None,
+    dec_max: float = None,
+    object_types: list = None,
+    redshift_min: float = None,
+    redshift_max: float = None,
+    data_releases: list = None,
+    max_results: int = None,
+    output_file: str = None,
+    **kwargs
+):
+    """
+    Search DESI objects using SPARCL client (searches ALL surveys: DESI + BOSS + SDSS).
+    """
+    
+    if not SPARCL_AVAILABLE:
+        return [types.TextContent(
+            type="text",
+            text="Error: SPARCL client not available. Please install with: pip install sparclclient"
+        )]
+    
+    if not desi_server.sparcl_client:
+        return [types.TextContent(
+            type="text",
+            text="Error: SPARCL client could not be initialized."
+        )]
+    
+    # Build SPARCL constraints
+    constraints = {}
+    outfields = ['sparcl_id', 'ra', 'dec', 'redshift', 'redshift_err', 'spectype', 'data_release', 'targetid']
+    
+    # Coordinate constraints
+    if ra is not None and dec is not None:
+        if radius is None:
+            # For nearest searches, use larger radius and we'll sort by distance
+            search_radius = 0.1  # 0.1 degrees
+        else:
+            search_radius = radius
+        
+        # SPARCL uses box constraints, so convert circle to box
+        constraints['ra'] = [ra - search_radius, ra + search_radius]
+        constraints['dec'] = [dec - search_radius, dec + search_radius]
+        
+    elif all(x is not None for x in [ra_min, ra_max, dec_min, dec_max]):
+        constraints['ra'] = [ra_min, ra_max]
+        constraints['dec'] = [dec_min, dec_max]
+    
+    # Object type constraints
+    if object_types:
+        constraints['spectype'] = [t.upper() for t in object_types]
+    
+    # Redshift constraints
+    if redshift_min is not None or redshift_max is not None:
+        redshift_range = []
+        if redshift_min is not None:
+            redshift_range.append(redshift_min)
+        if redshift_max is not None:
+            redshift_range.append(redshift_max)
+        constraints['redshift'] = redshift_range
+    
+    # Data release constraints
+    if data_releases:
+        constraints['data_release'] = data_releases
+    
+    # Execute SPARCL search
+    try:
+        limit = max_results if max_results else 500
+        
+        found = desi_server.sparcl_client.find(
+            outfields=outfields,
+            constraints=constraints,
+            limit=limit
+        )
+        
+        # Convert to list format for consistency
+        results_list = []
+        for record in found.records:
+            obj_dict = {
+                'sparcl_id': record.sparcl_id,
+                'ra': record.ra,
+                'dec': record.dec,
+                'redshift': record.redshift,
+                'redshift_err': record.redshift_err,
+                'spectype': record.spectype,
+                'data_release': record.data_release,
+                'targetid': getattr(record, 'targetid', None)
+            }
+            
+            # Calculate distance for nearest searches
+            if ra is not None and dec is not None and radius is None:
+                import math
+                # Calculate angular distance in arcseconds
+                ra_diff = (record.ra - ra) * math.cos(math.radians(dec))
+                dec_diff = record.dec - dec
+                distance_arcsec = math.sqrt(ra_diff**2 + dec_diff**2) * 3600
+                obj_dict['distance_arcsec'] = distance_arcsec
+            
+            results_list.append(obj_dict)
+        
+        # Sort by distance for nearest searches
+        if ra is not None and dec is not None and radius is None:
+            results_list.sort(key=lambda x: x.get('distance_arcsec', float('inf')))
+        
+        # Save to file if requested
+        if output_file:
+            import json
+            from datetime import datetime
+            with open(output_file, 'w') as f:
+                json.dump({
+                    'query': {
+                        'method': 'SPARCL client',
+                        'constraints': constraints,
+                        'timestamp': datetime.now().isoformat()
+                    },
+                    'metadata': {
+                        'total_found': len(results_list),
+                        'surveys_searched': 'ALL (DESI + BOSS + SDSS)',
+                        'method': 'SPARCL client'
+                    },
+                    'results': results_list
+                }, f, indent=2)
+        
+        # Format response
+        response = f"Found {len(results_list)} objects using SPARCL client\n"
+        response += f"(Searched ALL surveys: DESI + BOSS + SDSS)\n\n"
+        
+        for i, obj in enumerate(results_list[:10]):
+            response += f"{i+1}. {obj.get('spectype', 'N/A')} at "
+            response += f"({obj.get('ra', 0):.4f}, {obj.get('dec', 0):.4f}), "
+            response += f"z={obj.get('redshift', 0):.4f} "
+            response += f"[{obj.get('data_release', 'N/A')}]"
+            
+            # Show distance if calculated (for nearest searches)
+            if 'distance_arcsec' in obj:
+                response += f" - Distance: {obj.get('distance_arcsec', 0):.2f}″"
+            
+            response += "\n"
+            response += f"   SPARCL ID: {obj.get('sparcl_id', 'N/A')}\n"
+            response += f"   Target ID: {obj.get('targetid', 'N/A')}\n"
+        
+        if len(results_list) > 10:
+            response += f"\n... and {len(results_list) - 10} more objects"
+        
+        if len(results_list) > 0:
+            response += f"\n\nTo get detailed spectrum data, use get_spectrum_by_id with one of the SPARCL IDs above."
+        
+        return [types.TextContent(type="text", text=response)]
+        
+    except Exception as e:
+        logger.error(f"SPARCL client error: {str(e)}")
+        return [types.TextContent(
+            type="text",
+            text=f"SPARCL client error: {str(e)}"
+        )]
+
 async def search_objects_sql(
     # Same parameters as before
     ra: float = None,
@@ -439,9 +604,6 @@ async def search_objects_sql(
         )]
     
     # Build SQL query - use sparcl.main table which has known schema
-    sql_parts = []
-    
-    # SELECT clause - use sparcl.main table which has standardized columns
     select_cols = [
         "targetid", "ra", "dec", "redshift", "redshift_err",
         "spectype", "data_release", "sparcl_id", "specid", "instrument"
@@ -452,18 +614,31 @@ async def search_objects_sql(
     
     # WHERE clause
     where_conditions = []
+    order_by_distance = False
     
     # Coordinate constraints
     if ra is not None and dec is not None:
         if radius is None:
-            radius = 0.001  # Default 3.6 arcsec
-        # Use Q3C for efficient cone search
+            # For "nearest" searches, use a larger search radius and sort by distance
+            search_radius = 0.1  # 0.1 degrees = 6 arcmin search radius
+        else:
+            search_radius = radius
+        
+        # Use Q3C for efficient cone search, but also calculate distances for sorting
         where_conditions.append(
-            f"q3c_radial_query(ra, dec, {ra}, {dec}, {radius})"
+            f"q3c_radial_query(ra, dec, {ra}, {dec}, {search_radius})"
         )
+        
+        # ALWAYS add distance calculation and sorting for coordinate searches
+        select_cols.append(f"q3c_dist(ra, dec, {ra}, {dec}) * 3600 as distance_arcsec")
+        order_by_distance = True
+        
     elif all(x is not None for x in [ra_min, ra_max, dec_min, dec_max]):
         where_conditions.append(f"ra BETWEEN {ra_min} AND {ra_max}")
         where_conditions.append(f"dec BETWEEN {dec_min} AND {dec_max}")
+        order_by_distance = False
+    else:
+        order_by_distance = False
     
     # Object type constraints
     if object_types:
@@ -481,9 +656,17 @@ async def search_objects_sql(
         releases_str = "','".join(data_releases)
         where_conditions.append(f"data_release IN ('{releases_str}')")
     
+    # Rebuild SQL with updated SELECT clause (including distance if needed)
+    sql = f"SELECT {', '.join(select_cols)}\n"
+    sql += "FROM sparcl.main\n"
+    
     # Add WHERE clause
     if where_conditions:
         sql += "WHERE " + " AND ".join(where_conditions) + "\n"
+    
+    # Add ORDER BY if distance calculation is needed
+    if order_by_distance:
+        sql += "ORDER BY distance_arcsec\n"
     
     # Add LIMIT if specified
     if max_results:
@@ -493,7 +676,6 @@ async def search_objects_sql(
     try:
         if async_query or (max_results and max_results > 100000):
             # Use async for large queries
-            logger.info(f"Executing async SQL query for large dataset")
             jobid = qc.query(sql=sql, fmt='pandas', async_=True)
             
             # Poll for completion
@@ -531,7 +713,7 @@ async def search_objects_sql(
                     'results': results_list
                 }, f, indent=2)
         
-        # Format response with clear sparcl_id extraction
+        # Format response
         response = f"Found {len(results_list)} objects using Data Lab SQL\n"
         response += f"(Full DESI catalog accessible via sparcl.main)\n\n"
         
@@ -539,7 +721,13 @@ async def search_objects_sql(
             response += f"{i+1}. {obj.get('spectype', 'N/A')} at "
             response += f"({obj.get('ra', 0):.4f}, {obj.get('dec', 0):.4f}), "
             response += f"z={obj.get('redshift', 0):.4f} "
-            response += f"[{obj.get('data_release', 'N/A')}]\n"
+            response += f"[{obj.get('data_release', 'N/A')}]"
+            
+            # Show distance if calculated (for nearest searches)
+            if 'distance_arcsec' in obj:
+                response += f" - Distance: {obj.get('distance_arcsec', 0):.2f}″"
+            
+            response += "\n"
             response += f"   SPARCL ID: {obj.get('sparcl_id', 'N/A')}\n"
             response += f"   Target ID: {obj.get('targetid', 'N/A')}\n"
         
@@ -555,7 +743,7 @@ async def search_objects_sql(
         logger.error(f"SQL query error: {str(e)}")
         return [types.TextContent(
             type="text",
-            text=f"SQL query error: {str(e)}\nSQL: {sql}"
+            text=f"SQL query error: {str(e)}"
         )]
 
 # Then update the main call_tool function
@@ -591,8 +779,15 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
     
     try:
         if name == "search_objects":
-            # Call the unified search function with all arguments
-            return await search_objects_sql(**arguments)
+            # Use Data Lab SQL by default, SPARCL as backup option
+            use_sparcl = arguments.get('use_sparcl_client', False)
+            
+            if use_sparcl:
+                # Use SPARCL client for cross-survey searches (DESI + BOSS + SDSS)
+                return await search_objects_sparcl(**arguments)
+            else:
+                # Use Data Lab SQL for fast queries on sparcl.main table
+                return await search_objects_sql(**arguments)
         
         elif name == "get_spectrum_by_id":
             sparcl_id = arguments["sparcl_id"]
