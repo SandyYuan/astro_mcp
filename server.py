@@ -403,17 +403,17 @@ def format_search_results(found, show_limit=10):
     summary = f"Found {len(found.records)} objects:\n\n"
     
     for i, record in enumerate(found.records[:show_limit]):
-        # Use proper SPARCL field access with getattr
-        obj_type = getattr(record, 'spectype', 'Unknown')
-        redshift = getattr(record, 'redshift', 'N/A')
-        ra = getattr(record, 'ra', 'N/A')
-        dec = getattr(record, 'dec', 'N/A')
-        sparcl_id = getattr(record, 'sparcl_id', 'N/A')
+        # Use direct SPARCL field access
+        obj_type = record.spectype
+        redshift = record.redshift
+        ra = record.ra
+        dec = record.dec
+        sparcl_id = record.sparcl_id
         
         summary += f"{i+1:2d}. {obj_type} at z={redshift}"
-        if ra != 'N/A' and dec != 'N/A':
+        if ra is not None and dec is not None:
             summary += f" ({ra:.4f}, {dec:.4f})"
-        if sparcl_id != 'N/A':
+        if sparcl_id is not None:
             # Show only first few chars of UUID for readability
             short_id = str(sparcl_id)[:8] + "..." if len(str(sparcl_id)) > 8 else str(sparcl_id)
             summary += f" [ID: {short_id}]"
@@ -423,23 +423,6 @@ def format_search_results(found, show_limit=10):
         summary += f"\n... and {len(found.records) - show_limit} more objects"
     
     return summary
-
-def get_first_spectrum_id(found):
-    """
-    Extract the first valid SPARCL ID from search results using the .ids property.
-    
-    This helper function properly accesses SPARCL IDs from search results using
-    the .ids property, which is the correct way according to SPARCL examples.
-    
-    Args:
-        found: SPARCL search result object from client.find()
-    
-    Returns:
-        str or None: First SPARCL ID if available, None otherwise
-    """
-    if hasattr(found, 'ids') and found.ids:
-        return found.ids[0]
-    return None
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextContent]:
@@ -589,8 +572,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
                 nearest_record = None
                 
                 for record in found.records:
-                    obj_ra = getattr(record, 'ra', None)
-                    obj_dec = getattr(record, 'dec', None)
+                    obj_ra = record.ra
+                    obj_dec = record.dec
                     if obj_ra is not None and obj_dec is not None:
                         # Angular distance calculation (small angle approximation)
                         cos_dec = math.cos(math.radians(dec))
@@ -612,13 +595,13 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
                 class MockFound:
                     def __init__(self, record):
                         self.records = [record]
-                        self.ids = [getattr(record, 'sparcl_id', None)] if hasattr(record, 'sparcl_id') else []
+                        self.ids = [record.sparcl_id] if hasattr(record, 'sparcl_id') else []
                 
                 found = MockFound(nearest_record)
                 
                 # Format the single nearest result
-                obj_ra = getattr(nearest_record, 'ra', 'N/A')
-                obj_dec = getattr(nearest_record, 'dec', 'N/A')
+                obj_ra = nearest_record.ra
+                obj_dec = nearest_record.dec
                 distance_arcsec = min_distance * 3600 if min_distance != float('inf') else 'N/A'
                 
                 response_text = f"Nearest object to RA={ra:.4f}°, Dec={dec:.4f}°:\n\n"
@@ -690,15 +673,15 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
                 summary = f"""
 Spectrum Summary for ID: {sparcl_id}
 =====================================
-Object Type: {getattr(spectrum, 'spectype', 'Unknown')}
-Redshift: {getattr(spectrum, 'redshift', 'N/A')}
-Redshift Error: {getattr(spectrum, 'redshift_err', 'N/A')}
-Redshift Warning: {getattr(spectrum, 'redshift_warning', 'N/A')}
-Coordinates: ({getattr(spectrum, 'ra', 'N/A')}, {getattr(spectrum, 'dec', 'N/A')})
-Survey Program: {getattr(spectrum, 'survey', 'N/A')}
-Data Release: {getattr(spectrum, 'data_release', 'N/A')}
-Spec ID: {getattr(spectrum, 'specid', 'N/A')}
-Target ID: {getattr(spectrum, 'targetid', 'N/A')}
+Object Type: {spectrum.spectype}
+Redshift: {spectrum.redshift}
+Redshift Error: {spectrum.redshift_err}
+Redshift Warning: {spectrum.redshift_warning}
+Coordinates: ({spectrum.ra}, {spectrum.dec})
+Survey Program: {spectrum.survey}
+Data Release: {spectrum.data_release}
+Spec ID: {spectrum.specid}
+Target ID: {spectrum.targetid}
 
 To get full spectrum data (flux, wavelength arrays), use format='full'
                 """
@@ -706,10 +689,10 @@ To get full spectrum data (flux, wavelength arrays), use format='full'
             
             elif format_type == "full":
                 # Get spectral arrays
-                wavelength = getattr(spectrum, 'wavelength', None)
-                flux = getattr(spectrum, 'flux', None)
-                model = getattr(spectrum, 'model', None)
-                ivar = getattr(spectrum, 'ivar', None)
+                wavelength = spectrum.wavelength
+                flux = spectrum.flux
+                model = spectrum.model
+                ivar = spectrum.ivar
                 
                 if wavelength is None or flux is None:
                     return [types.TextContent(
@@ -718,26 +701,25 @@ To get full spectrum data (flux, wavelength arrays), use format='full'
                     )]
                 
                 # Create filenames
-                obj_type = getattr(spectrum, 'spectype', 'UNKNOWN')
-                redshift = getattr(spectrum, 'redshift', 0.0)
+                obj_type = spectrum.spectype
+                redshift = spectrum.redshift
                 base_name = f"spectrum_{obj_type}_{redshift:.4f}_{sparcl_id[:8]}"
                 
-                txt_filename = f"{base_name}.txt"
                 json_filename = f"{base_name}.json"
                 
                 # Prepare metadata (no large arrays)
                 metadata = {
                     "sparcl_id": sparcl_id,
-                    "object_type": getattr(spectrum, 'spectype', 'Unknown'),
-                    "redshift": float(getattr(spectrum, 'redshift', 0.0)),
-                    "redshift_err": float(getattr(spectrum, 'redshift_err', 0.0)) if getattr(spectrum, 'redshift_err', None) is not None else None,
-                    "redshift_warning": int(getattr(spectrum, 'redshift_warning', 0)) if getattr(spectrum, 'redshift_warning', None) is not None else None,
-                    "ra": float(getattr(spectrum, 'ra', 0.0)) if getattr(spectrum, 'ra', None) is not None else None,
-                    "dec": float(getattr(spectrum, 'dec', 0.0)) if getattr(spectrum, 'dec', None) is not None else None,
-                    "survey": getattr(spectrum, 'survey', None),
-                    "data_release": getattr(spectrum, 'data_release', None),
-                    "specid": str(getattr(spectrum, 'specid', None)) if getattr(spectrum, 'specid', None) is not None else None,
-                    "targetid": str(getattr(spectrum, 'targetid', None)) if getattr(spectrum, 'targetid', None) is not None else None
+                    "object_type": obj_type,
+                    "redshift": redshift,
+                    "redshift_err": spectrum.redshift_err,
+                    "redshift_warning": spectrum.redshift_warning,
+                    "ra": spectrum.ra,
+                    "dec": spectrum.dec,
+                    "survey": spectrum.survey,
+                    "data_release": spectrum.data_release,
+                    "specid": spectrum.specid,
+                    "targetid": spectrum.targetid
                 }
                 
                 # Prepare data info (no large arrays)
@@ -748,10 +730,7 @@ To get full spectrum data (flux, wavelength arrays), use format='full'
                     "wavelength_range": [float(wavelength.min()), float(wavelength.max())] if wavelength is not None else None,
                     "has_model": model is not None,
                     "has_inverse_variance": ivar is not None,
-                    "data_files": {
-                        "txt_file": txt_filename,
-                        "json_file": json_filename
-                    }
+                    "data_file": json_filename
                 }
                 
                 # Save files
@@ -773,27 +752,6 @@ To get full spectrum data (flux, wavelength arrays), use format='full'
                     with open(json_filename, 'w') as f:
                         json.dump(spectrum_data_for_file, f, indent=2)
                     files_saved.append(json_filename)
-                    
-                    # Save as text file for compatibility
-                    data_columns = [wavelength, flux]
-                    column_names = ['wavelength_angstrom', 'flux_1e-17_erg_s_cm2_A']
-                    
-                    if model is not None:
-                        data_columns.append(model)
-                        column_names.append('model_1e-17_erg_s_cm2_A')
-                    
-                    if ivar is not None:
-                        data_columns.append(ivar)
-                        column_names.append('inverse_variance')
-                    
-                    header = f"# DESI spectrum for {obj_type} at z={redshift}\n"
-                    header += f"# SPARCL ID: {sparcl_id}\n"
-                    header += f"# Columns: {' '.join(column_names)}\n"
-                    
-                    data_array = np.column_stack(data_columns)
-                    np.savetxt(txt_filename, data_array, header=header, 
-                              fmt='%.6f', delimiter='    ')
-                    files_saved.append(txt_filename)
                     
                 except Exception as e:
                     return [types.TextContent(
@@ -822,9 +780,8 @@ Flux Units: {data_info['flux_unit']}
 Model Available: {data_info['has_model']}
 Inverse Variance Available: {data_info['has_inverse_variance']}
 
-FILES SAVED:
+FILE SAVED:
 ✅ JSON format: {json_filename}
-✅ Text format: {txt_filename}
 """
                 
                 return [types.TextContent(type="text", text=response_text)]
