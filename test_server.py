@@ -63,28 +63,28 @@ async def test_tool_validation():
         
         # Test coordinate search with valid coordinates
         print("  Testing coordinate search with valid coordinates...")
-        result = await call_tool("find_spectra_by_coordinates", {"ra": 10.68, "dec": 41.27, "radius": 0.01})
+        result = await call_tool("search_objects", {"ra": 10.68, "dec": 41.27, "radius": 0.01})
         result_text = result[0].text
-        if "search results" in result_text.lower():
+        if "Found" in result_text or "No objects found" in result_text:
             print("    ✓ Coordinate search working correctly")
         else:
             print(f"    ✗ Unexpected coordinate search result: {result_text[:50]}...")
         
         # Test object type search
         print("  Testing object type search...")
-        result = await call_tool("search_by_object_type", {"object_type": "galaxy", "max_results": 10})
+        result = await call_tool("search_objects", {"object_types": ["GALAXY"], "max_results": 10})
         result_text = result[0].text
-        if "search results" in result_text.lower():
+        if "Found" in result_text or "No objects found" in result_text:
             print("    ✓ Object type search working correctly")
         else:
             print(f"    ✗ Unexpected object type search result: {result_text[:50]}...")
         
         # Test region search
         print("  Testing region search...")
-        result = await call_tool("search_in_region", 
+        result = await call_tool("search_objects", 
                                 {"ra_min": 10.0, "ra_max": 11.0, "dec_min": 40.0, "dec_max": 42.0, "max_results": 10})
         result_text = result[0].text
-        if "search results" in result_text.lower():
+        if "Found" in result_text or "No objects found" in result_text:
             print("    ✓ Region search working correctly")
         else:
             print(f"    ✗ Unexpected region search result: {result_text[:50]}...")
@@ -102,7 +102,7 @@ async def test_sparcl_dependency():
         
         if not SPARCL_AVAILABLE:
             print("  SPARCL not available - testing error handling...")
-            result = await call_tool("find_spectra_by_coordinates", {"ra": 150, "dec": 2})
+            result = await call_tool("search_objects", {"ra": 150, "dec": 2})
             error_text = result[0].text
             if "SPARCL client not available" in error_text:
                 print("    ✓ SPARCL unavailability handled correctly")

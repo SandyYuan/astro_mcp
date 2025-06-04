@@ -305,10 +305,10 @@ async def handle_list_tools() -> list[types.Tool]:
                     "include_arrays": {
                         "type": "boolean",
                         "description": "Include flux/wavelength arrays in results (limited to first 100 objects)",
-                        "default": false
+                        "default": False
                     }
                 },
-                "additionalProperties": true  # This allows kwargs!
+                "additionalProperties": True  # This allows kwargs!
             }
         ),
         types.Tool(
@@ -521,31 +521,56 @@ def search_objects(
             constraints[field] = value
     
     # Get list of all Core fields for output
-    # We'll return all Core fields that are available
+    # Use basic outfields that match SPARCL examples
     core_fields = [
-        'sparcl_id', 'specid', 'ra', 'dec', 'redshift', 'redshift_err',
-        'spectype', 'data_release', 'survey', 'program', 'targetid',
-        'dateobs', 'exptime', 'telescope', 'instrument', 'site',
-        'wavemin', 'wavemax', 'specprimary'
+        'sparcl_id', 'ra', 'dec', 'redshift', 'spectype', 'data_release', 
+        'survey', 'program'
     ]
     
-    # Add any fields from kwargs to outfields if they're Core fields
-    outfields = [f for f in core_fields if f not in ['flux', 'wavelength', 'ivar']]
+    # Add any fields from kwargs to outfields if they're Core fields  
+    outfields = core_fields.copy()
     
     # Execute search
     try:
+        # Ensure all constraint values are basic Python types (not numpy, Range, etc.)
+        serializable_constraints = {}
+        for key, value in constraints.items():
+            if isinstance(value, list):
+                # Convert any non-basic types in lists to basic Python types
+                serializable_value = []
+                for i, item in enumerate(value):
+                    if hasattr(item, 'item'):  # numpy scalars
+                        converted = item.item()
+                        serializable_value.append(converted)
+                    elif hasattr(item, 'tolist'):  # numpy arrays
+                        converted = item.tolist()
+                        serializable_value.extend(converted)
+                    else:
+                        converted = float(item) if isinstance(item, (int, float)) else item
+                        serializable_value.append(converted)
+                serializable_constraints[key] = serializable_value
+            else:
+                # Single values
+                if hasattr(value, 'item'):  # numpy scalars
+                    converted = value.item()
+                elif hasattr(value, 'tolist'):  # numpy arrays
+                    converted = value.tolist()
+                else:
+                    converted = float(value) if isinstance(value, (int, float)) else value
+                serializable_constraints[key] = converted
+        
         find_params = {
-            'constraints': constraints,
+            'constraints': serializable_constraints,
             'outfields': outfields
         }
         if max_results:
             find_params['limit'] = max_results
-            
+        
         found = desi_server.sparcl_client.find(**find_params)
         
         if not found.records:
             # Provide helpful feedback about the constraints used
-            constraint_summary = "\n".join([f"  {k}: {v}" for k, v in constraints.items()])
+            constraint_summary = "\n".join([f"  {k}: {v}" for k, v in serializable_constraints.items()])
             return [types.TextContent(
                 type="text",
                 text=f"No objects found matching the search criteria:\n{constraint_summary}"
@@ -592,7 +617,7 @@ def search_objects(
                 with open(output_file, 'w') as f:
                     json.dump({
                         'query': {
-                            'constraints': constraints,
+                            'constraints': serializable_constraints,
                             'timestamp': datetime.now().isoformat(),
                             'sparcl_query': str(find_params)
                         },
@@ -611,7 +636,7 @@ def search_objects(
         # Format response with constraint summary
         response = f"Found {len(found.records)} objects\n"
         response += f"Constraints applied:\n"
-        for k, v in constraints.items():
+        for k, v in serializable_constraints.items():
             response += f"  {k}: {v}\n"
         response += "\nResults:\n"
         
@@ -625,9 +650,9 @@ def search_objects(
                 parts.append(f"({obj['ra']:.4f}, {obj['dec']:.4f})")
             if 'redshift' in obj:
                 parts.append(f"z={obj['redshift']:.4f}")
-            if 'survey' in obj:
+            if 'survey' in obj and obj['survey']:
                 parts.append(f"survey={obj['survey']}")
-            if 'program' in obj:
+            if 'program' in obj and obj['program']:
                 parts.append(f"prog={obj['program']}")
             
             response += " ".join(parts) + "\n"
@@ -647,7 +672,7 @@ def search_objects(
             error_msg += "\nThis may be due to an invalid field name or constraint format."
             error_msg += "\nCheck available fields at: https://astrosparcl.datalab.noirlab.edu/sparc/fieldtable/"
         
-        logger.error(f"Search error with constraints {constraints}: {str(e)}")
+        logger.error(f"Search error with constraints {serializable_constraints}: {str(e)}")
         return [types.TextContent(type="text", text=error_msg)]
     
 # Then update the main call_tool function
