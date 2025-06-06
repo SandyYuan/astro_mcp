@@ -378,12 +378,6 @@ async def handle_list_tools() -> list[types.Tool]:
                         "enum": ["json", "csv", "npy", "auto"],
                         "default": "auto"
                     },
-                    "category": {
-                        "type": "string",
-                        "description": "Organization category: spectra, searches, catalogs, analysis, or auto-detect",
-                        "enum": ["spectra", "searches", "catalogs", "analysis", "auto"],
-                        "default": "auto"
-                    },
                     "description": {
                         "type": "string",
                         "description": "Human-readable description for the file"
@@ -422,11 +416,6 @@ async def handle_list_tools() -> list[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "category": {
-                        "type": "string",
-                        "description": "Filter by category: spectra, searches, catalogs, analysis",
-                        "enum": ["spectra", "searches", "catalogs", "analysis"]
-                    },
                     "file_type": {
                         "type": "string",
                         "description": "Filter by file type: json, csv, npy"
@@ -647,7 +636,6 @@ async def search_objects_sparcl(
                 data=search_data,
                 filename=output_file,
                 file_type='json',
-                category='searches',
                 description=f"SPARCL search results: {len(results_list)} objects from ALL surveys",
                 metadata={
                     'search_method': 'SPARCL client',
@@ -847,7 +835,6 @@ async def search_objects_sql(
                 data=search_data,
                 filename=output_file,
                 file_type='json',
-                category='searches',
                 description=f"Data Lab SQL search results: {len(results_list)} objects from DESI catalog",
                 metadata={
                     'search_method': 'Data Lab SQL',
@@ -1137,7 +1124,6 @@ To get full spectrum data (flux, wavelength arrays), use format='full'
                     data=spectrum_data,
                     filename=filename,
                     file_type='json',
-                    category='spectra',
                     description=f"DESI spectrum: {spectrum.spectype} at z={spectrum.redshift:.4f}",
                     metadata={
                         'sparcl_id': sparcl_id,
@@ -1192,7 +1178,6 @@ FILE SAVED:
             filename = arguments["filename"]
             data = arguments["data"]
             data_type = arguments.get("data_type", "auto")
-            category = arguments.get("category", "auto")
             description = arguments.get("description")
             metadata = arguments.get("metadata")
             
@@ -1200,7 +1185,6 @@ FILE SAVED:
                 data=data,
                 filename=filename,
                 file_type=data_type,
-                category=category,
                 description=description,
                 metadata=metadata
             )
@@ -1251,13 +1235,11 @@ File loaded: {metadata['filename']}
             return [types.TextContent(type="text", text=response)]
         
         elif name == "list_files":
-            category = arguments.get("category")
             file_type = arguments.get("file_type")
             pattern = arguments.get("pattern")
             limit = arguments.get("limit", 20)
             
             files = file_manager.list_files(
-                category=category,
                 file_type=file_type,
                 pattern=pattern,
                 limit=limit
@@ -1269,7 +1251,7 @@ File loaded: {metadata['filename']}
                 response = f"Found {len(files)} file(s):\n\n"
                 
                 for i, file_info in enumerate(files, 1):
-                    response += f"{i}. [{file_info['category']}] {file_info['filename']}\n"
+                    response += f"{i}. [{file_info['file_type']}] {file_info['filename']}\n"
                     response += f"   ID: {file_info['id']}\n"
                     response += f"   Size: {file_info['size_bytes']:,} bytes\n"
                     response += f"   Created: {file_info['created']}\n"
@@ -1298,11 +1280,6 @@ File loaded: {metadata['filename']}
             response += "By Type:\n"
             for ftype, count in stats['by_type'].items():
                 response += f"  - {ftype}: {count} files\n"
-            
-            response += "\nBy Category:\n"
-            for category, info in stats['by_category'].items():
-                response += f"  - {category}: {info['count']} files, "
-                response += f"{info['size_bytes'] / 1024 / 1024:.1f} MB\n"
             
             response += "\nRecent Files:\n"
             for f in stats['recent_files']:
@@ -1333,17 +1310,8 @@ class DESIFileManager:
         self.base_dir = Path(base_dir or os.environ.get('DESI_MCP_DATA_DIR', './desi_mcp_data'))
         self.base_dir = self.base_dir.expanduser().resolve()
         
-        # Create organized directory structure
-        self.dirs = {
-            'spectra': self.base_dir / 'spectra',
-            'searches': self.base_dir / 'searches',
-            'catalogs': self.base_dir / 'catalogs',
-            'analysis': self.base_dir / 'analysis',
-            'temp': self.base_dir / 'temp'
-        }
-        
-        for dir_path in self.dirs.values():
-            dir_path.mkdir(parents=True, exist_ok=True)
+        # Create main data directory
+        self.base_dir.mkdir(parents=True, exist_ok=True)
         
         # Initialize file registry
         self._load_registry()
@@ -1375,7 +1343,6 @@ class DESIFileManager:
         data: Any,
         filename: str,
         file_type: str = 'auto',
-        category: str = 'auto',
         description: str = None,
         metadata: Dict = None
     ) -> Dict[str, Any]:
@@ -1386,7 +1353,6 @@ class DESIFileManager:
             data: Data to save (dict, DataFrame, numpy array, etc.)
             filename: Base filename (will be sanitized)
             file_type: Type of file (json, csv, npy, auto-detect)
-            category: Category for organization (spectra, searches, catalogs, analysis)
             description: Human-readable description
             metadata: Additional metadata to store
         
@@ -1407,24 +1373,12 @@ class DESIFileManager:
             else:
                 file_type = 'json'  # Default
         
-        # Auto-detect category if needed
-        if category == 'auto':
-            if 'spectrum' in safe_filename.lower():
-                category = 'spectra'
-            elif 'search' in safe_filename.lower():
-                category = 'searches'
-            elif 'catalog' in safe_filename.lower():
-                category = 'catalogs'
-            else:
-                category = 'analysis'
-        
         # Ensure proper extension
         if not safe_filename.endswith(f'.{file_type}'):
             safe_filename = f"{safe_filename}.{file_type}"
         
-        # Determine save path
-        save_dir = self.dirs.get(category, self.dirs['temp'])
-        filepath = save_dir / safe_filename
+        # Save directly to main directory (no subfolders)
+        filepath = self.base_dir / safe_filename
         
         # Save the file
         try:
@@ -1454,11 +1408,10 @@ class DESIFileManager:
                 'id': file_id,
                 'filename': safe_filename,
                 'filepath': str(filepath),
-                'category': category,
                 'file_type': file_type,
                 'size_bytes': file_size,
                 'created': datetime.now().isoformat(),
-                'description': description or f"{category} file: {safe_filename}",
+                'description': description or f"Data file: {safe_filename}",
                 'metadata': metadata or {}
             }
             
@@ -1478,8 +1431,9 @@ class DESIFileManager:
                 'file_id': file_id,
                 'filename': safe_filename,
                 'filepath': str(filepath),
-                'category': category,
+                'file_type': file_type,
                 'size_bytes': file_size,
+                'created': datetime.now().isoformat(),
                 'description': file_record['description']
             }
             
@@ -1567,7 +1521,6 @@ class DESIFileManager:
     
     def list_files(
         self,
-        category: str = None,
         file_type: str = None,
         pattern: str = None,
         sort_by: str = 'created',
@@ -1577,7 +1530,6 @@ class DESIFileManager:
         List files with filtering and sorting.
         
         Args:
-            category: Filter by category
             file_type: Filter by file type
             pattern: Filter by filename pattern
             sort_by: Sort key (created, size, filename)
@@ -1589,8 +1541,6 @@ class DESIFileManager:
         files = list(self.registry['files'].values())
         
         # Apply filters
-        if category:
-            files = [f for f in files if f['category'] == category]
         if file_type:
             files = [f for f in files if f['file_type'] == file_type]
         if pattern:
@@ -1615,16 +1565,6 @@ class DESIFileManager:
         """Get file system statistics."""
         stats = self.registry['statistics'].copy()
         
-        # Add category statistics
-        stats['by_category'] = {}
-        for category in self.dirs.keys():
-            cat_files = [f for f in self.registry['files'].values() 
-                        if f['category'] == category]
-            stats['by_category'][category] = {
-                'count': len(cat_files),
-                'size_bytes': sum(f['size_bytes'] for f in cat_files)
-            }
-        
         # Add recent files
         recent_files = sorted(
             self.registry['files'].values(),
@@ -1638,7 +1578,7 @@ class DESIFileManager:
         
         return stats
     
-    def cleanup_old_files(self, days: int = 30, category: str = 'temp'):
+    def cleanup_old_files(self, days: int = 30):
         """Remove files older than specified days."""
         from datetime import timedelta
         
@@ -1647,9 +1587,6 @@ class DESIFileManager:
         removed_size = 0
         
         for file_id, record in list(self.registry['files'].items()):
-            if record['category'] != category:
-                continue
-                
             created_date = datetime.fromisoformat(record['created'])
             if created_date < cutoff_date:
                 filepath = Path(record['filepath'])
