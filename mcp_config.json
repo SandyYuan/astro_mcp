@@ -2,7 +2,7 @@
   "mcpServers": {
     "desi-basic": {
       "command": "python",
-      "args": ["server.py"],
+      "args": ["/Users/sandyyuan/projects/mcp/server.py"],
       "cwd": ".",
       "env": {}
     }
