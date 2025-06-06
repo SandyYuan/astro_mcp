@@ -1307,7 +1307,17 @@ class DESIFileManager:
     """Centralized file management for DESI MCP server."""
     
     def __init__(self, base_dir: str = None):
-        self.base_dir = Path(base_dir or os.environ.get('DESI_MCP_DATA_DIR', './desi_mcp_data'))
+        if base_dir:
+            self.base_dir = Path(base_dir)
+        else:
+            # Use environment variable or default to user's home directory
+            env_dir = os.environ.get('DESI_MCP_DATA_DIR')
+            if env_dir:
+                self.base_dir = Path(env_dir)
+            else:
+                # Default to a subdirectory in user's home directory
+                self.base_dir = Path.home() / 'desi_mcp_data'
+        
         self.base_dir = self.base_dir.expanduser().resolve()
         
         # Create main data directory
