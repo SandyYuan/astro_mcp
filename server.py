@@ -616,7 +616,7 @@ async def search_objects_sparcl(
             import json
             from datetime import datetime
             
-            # Prepare data for file manager
+            # Save directly to current working directory
             search_data = {
                 'query': {
                     'method': 'SPARCL client',
@@ -631,19 +631,48 @@ async def search_objects_sparcl(
                 'results': results_list
             }
             
-            # Use file manager for better organization
-            save_result = file_manager.save_file(
-                data=search_data,
-                filename=output_file,
-                file_type='json',
-                description=f"SPARCL search results: {len(results_list)} objects from ALL surveys",
-                metadata={
-                    'search_method': 'SPARCL client',
-                    'num_results': len(results_list),
-                    'constraints': constraints,
-                    'surveys': 'DESI+BOSS+SDSS'
+            # Try to save to multiple possible writable locations
+            save_result = None
+            save_attempts = [
+                Path(output_file),  # Current directory (Claude Desktop working dir)
+                Path.home() / output_file,  # User's home directory
+                Path('/tmp') / output_file,  # Temp directory (Unix/Linux/Mac)
+                Path.cwd() / 'downloads' / output_file,  # Downloads subdirectory
+            ]
+            
+            # Add Windows temp if on Windows
+            import tempfile
+            save_attempts.append(Path(tempfile.gettempdir()) / output_file)
+            
+            for attempt_path in save_attempts:
+                try:
+                    # Create parent directory if it doesn't exist
+                    attempt_path.parent.mkdir(parents=True, exist_ok=True)
+                    
+                    with open(attempt_path, 'w') as f:
+                        json.dump(search_data, f, indent=2)
+                    
+                    file_size = attempt_path.stat().st_size
+                    save_result = {
+                        'status': 'success',
+                        'filename': output_file,
+                        'size_bytes': file_size,
+                        'path': str(attempt_path.absolute()),
+                        'location': str(attempt_path.parent)
+                    }
+                    break  # Success! Stop trying other locations
+                    
+                except (PermissionError, OSError) as e:
+                    # Try next location
+                    continue
+            
+            # If all save attempts failed, note that we'll return full data instead
+            if save_result is None:
+                save_result = {
+                    'status': 'failed',
+                    'error': 'All writable locations failed - returning full data in response',
+                    'filename': output_file
                 }
-            )
         else:
             save_result = None
         
@@ -651,7 +680,7 @@ async def search_objects_sparcl(
         response = f"Found {len(results_list)} objects using SPARCL client\n"
         response += f"(Searched ALL surveys: DESI + BOSS + SDSS)\n\n"
         
-        for i, obj in enumerate(results_list[:10]):
+        for i, obj in enumerate(results_list[:25]):
             response += f"{i+1}. {obj.get('spectype', 'N/A')} at "
             response += f"({obj.get('ra', 0):.4f}, {obj.get('dec', 0):.4f}), "
             response += f"z={obj.get('redshift', 0):.4f} "
@@ -665,17 +694,16 @@ async def search_objects_sparcl(
             response += f"   SPARCL ID: {obj.get('sparcl_id', 'N/A')}\n"
             response += f"   Target ID: {obj.get('targetid', 'N/A')}\n"
         
-        if len(results_list) > 10:
-            response += f"\n... and {len(results_list) - 10} more objects"
+        if len(results_list) > 25:
+            response += f"\n... and {len(results_list) - 25} more objects"
         
         # Add file info if saved
         if output_file and save_result and save_result['status'] == 'success':
             response += f"\n\nSEARCH RESULTS SAVED:\n"
-            response += f"- File ID: {save_result['file_id']}\n"
             response += f"- Filename: {save_result['filename']}\n"
-            response += f"- Category: {save_result['category']}\n"
+            response += f"- Full path: {save_result['path']}\n"
             response += f"- Size: {save_result['size_bytes']:,} bytes\n"
-            response += f"- Access with: retrieve_data(\"{save_result['file_id']}\")\n"
+            response += f"- Claude Desktop repl access: window.fs.readFile('{save_result['path']}')\n"
         
         if len(results_list) > 0:
             response += f"\n\nTo get detailed spectrum data, use get_spectrum_by_id with one of the SPARCL IDs above."
@@ -796,6 +824,8 @@ async def search_objects_sql(
             
             # Poll for completion
             import time
+            max_wait_time = 300  # 300 seconds
+            elapsed_time = 0
             while True:
                 status = qc.status(jobid)
                 if status == 'COMPLETED':
@@ -804,7 +834,10 @@ async def search_objects_sql(
                 elif status == 'ERROR':
                     error = qc.error(jobid)
                     raise Exception(f"Query failed: {error}")
-                time.sleep(2)
+                await asyncio.sleep(2)
+                elapsed_time += 2
+                if elapsed_time > max_wait_time:
+                    raise Exception("Query timed out after 300 seconds")
         else:
             # Synchronous query for smaller datasets
             result_df = qc.query(sql=sql, fmt='pandas')
@@ -817,7 +850,7 @@ async def search_objects_sql(
             import json
             from datetime import datetime
             
-            # Prepare data for file manager
+            # Prepare data for structured file manager
             search_data = {
                 'query': {
                     'sql': sql,
@@ -830,7 +863,7 @@ async def search_objects_sql(
                 'results': results_list
             }
             
-            # Use file manager for better organization
+            # Use structured file manager for reliable saving
             save_result = file_manager.save_file(
                 data=search_data,
                 filename=output_file,
@@ -850,7 +883,7 @@ async def search_objects_sql(
         response = f"Found {len(results_list)} objects using Data Lab SQL\n"
         response += f"(Full DESI catalog accessible via sparcl.main)\n\n"
         
-        for i, obj in enumerate(results_list[:10]):
+        for i, obj in enumerate(results_list[:25]):
             response += f"{i+1}. {obj.get('spectype', 'N/A')} at "
             response += f"({obj.get('ra', 0):.4f}, {obj.get('dec', 0):.4f}), "
             response += f"z={obj.get('redshift', 0):.4f} "
@@ -864,17 +897,16 @@ async def search_objects_sql(
             response += f"   SPARCL ID: {obj.get('sparcl_id', 'N/A')}\n"
             response += f"   Target ID: {obj.get('targetid', 'N/A')}\n"
         
-        if len(results_list) > 10:
-            response += f"\n... and {len(results_list) - 10} more objects"
+        if len(results_list) > 25:
+            response += f"\n... and {len(results_list) - 25} more objects"
         
         # Add file info if saved
         if output_file and save_result and save_result['status'] == 'success':
             response += f"\n\nSEARCH RESULTS SAVED:\n"
-            response += f"- File ID: {save_result['file_id']}\n"
             response += f"- Filename: {save_result['filename']}\n"
-            response += f"- Category: {save_result['category']}\n"
+            response += f"- Full path: {save_result['path']}\n"
             response += f"- Size: {save_result['size_bytes']:,} bytes\n"
-            response += f"- Access with: retrieve_data(\"{save_result['file_id']}\")\n"
+            response += f"- Claude Desktop repl access: window.fs.readFile('{save_result['path']}')\n"
         
         if len(results_list) > 0:
             response += f"\n\nTo get detailed spectrum data, use get_spectrum_by_id with one of the SPARCL IDs above."
@@ -1118,24 +1150,20 @@ To get full spectrum data (flux, wavelength arrays), use format='full'
                     }
                 }
                 
-                # Use file manager to save with better organization
-                filename = f"spectrum_{spectrum.spectype}_{spectrum.redshift:.4f}_{sparcl_id[:8]}"
-                save_result = file_manager.save_file(
-                    data=spectrum_data,
-                    filename=filename,
-                    file_type='json',
-                    description=f"DESI spectrum: {spectrum.spectype} at z={spectrum.redshift:.4f}",
-                    metadata={
-                        'sparcl_id': sparcl_id,
-                        'object_type': spectrum.spectype,
-                        'redshift': spectrum.redshift,
-                        'wavelength_range': [float(wavelength.min()), float(wavelength.max())],
-                        'num_pixels': len(wavelength),
-                        'survey': spectrum.survey,
-                        'data_release': spectrum.data_release
-                    }
-                )
+                # Save directly to current directory for Claude Desktop access
+                filename = f"spectrum_{spectrum.spectype}_{spectrum.redshift:.4f}_{sparcl_id[:8]}.json"
+                output_path = Path(filename)
+                with open(output_path, 'w') as f:
+                    json.dump(spectrum_data, f, indent=2)
                 
+                file_size = output_path.stat().st_size
+                save_result = {
+                    'status': 'success',
+                    'filename': filename,
+                    'size_bytes': file_size,
+                    'path': str(output_path.absolute())
+                }
+            
                 # Format response (NO large arrays in context)
                 response_text = f"""
 Full Spectrum Data Retrieved for ID: {sparcl_id}
@@ -1158,11 +1186,8 @@ Model Available: {model is not None}
 Inverse Variance Available: {ivar is not None}
 
 FILE SAVED:
-- File ID: {save_result['file_id']}
 - Filename: {save_result['filename']}
-- Category: {save_result['category']}
-- Size: {save_result['size_bytes']:,} bytes
-- Access with: retrieve_data("{save_result['file_id']}")
+- Full path: {save_result['path']}\n"
 """
                 
                 return [types.TextContent(type="text", text=response_text)]
@@ -1194,7 +1219,6 @@ FILE SAVED:
 File saved successfully:
 - ID: {result['file_id']}
 - Filename: {result['filename']}
-- Category: {result['category']}
 - Size: {result['size_bytes']:,} bytes
 - Location: {result['filepath']}
 
@@ -1215,7 +1239,6 @@ Retrieve with: retrieve_data("{result['file_id']}") or retrieve_data("{result['f
                 metadata = result['metadata']
                 response = f"""
 File loaded: {metadata['filename']}
-- Category: {metadata['category']}
 - Type: {metadata['file_type']}
 - Size: {metadata['size_bytes']:,} bytes
 - Created: {metadata['created']}
@@ -1483,9 +1506,14 @@ class DESIFileManager:
                     break
         
         if not file_record:
+            # For debugging, list available files
+            available_files = [
+                f"ID: {fid}, filename: {record['filename']}" 
+                for fid, record in self.registry['files'].items()
+            ]
             return {
                 'status': 'error',
-                'error': f"File not found: {identifier}"
+                'error': f"File not found: {identifier}. Available files: {available_files[:5]}"  # Show first 5
             }
         
         filepath = Path(file_record['filepath'])
@@ -1617,6 +1645,68 @@ class DESIFileManager:
             'removed_files': removed_count,
             'freed_bytes': removed_size
         }
+
+    def export_to_cwd(
+        self,
+        identifier: str,
+        export_filename: str = None
+    ) -> Dict[str, Any]:
+        """
+        Export a file from structured storage to current working directory.
+        This allows Claude Desktop's repl environment to access the file with window.fs.readFile().
+        
+        Args:
+            identifier: File ID or filename in structured storage
+            export_filename: Optional custom filename for export
+        
+        Returns:
+            Dictionary with export status and file information
+        """
+        # Load file from structured storage
+        load_result = self.load_file(identifier, return_type='raw')
+        
+        if load_result['status'] != 'success':
+            return {
+                'status': 'error',
+                'error': f"Could not load file: {load_result['error']}"
+            }
+        
+        try:
+            # Get current working directory
+            cwd = Path.cwd()
+            
+            # Determine export filename
+            if export_filename:
+                final_filename = export_filename
+            else:
+                final_filename = load_result['metadata']['filename']
+            
+            export_path = cwd / final_filename
+            
+            # Copy file based on type
+            source_path = Path(load_result['metadata']['filepath'])
+            
+            # Simple file copy
+            import shutil
+            shutil.copy2(source_path, export_path)
+            
+            export_size = export_path.stat().st_size
+            
+            return {
+                'status': 'success',
+                'source_file_id': identifier,
+                'source_filename': load_result['metadata']['filename'],
+                'export_path': str(export_path),
+                'export_filename': final_filename,
+                'size_bytes': export_size,
+                'file_type': load_result['metadata']['file_type']
+            }
+            
+        except Exception as e:
+            return {
+                'status': 'error',
+                'error': str(e)
+            }
 
 # Initialize global file manager
 file_manager = DESIFileManager()
