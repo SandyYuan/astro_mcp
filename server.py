@@ -64,26 +64,67 @@ server = Server("desi-basic")
 class DESIMCPServer:
     """
     Unified DESI MCP Server - A Model Context Protocol server for DESI astronomical data access
-    with integrated file management.
+    with integrated file management and automatic data persistence.
     
     This server provides programmatic access to the Dark Energy Spectroscopic Instrument (DESI)
-    survey data through the SPARCL (SPectra Analysis & Retrievable Catalog Lab) interface.
-    DESI is a major astronomical survey that has observed millions of galaxies, quasars, and stars
-    to create the largest 3D map of the universe.
+    survey data through multiple interfaces with seamless data management:
     
-    Features:
-    - Object search with automatic data saving
-    - Spectrum retrieval with automatic data saving
-    - Structured file management and organization
-    - File retrieval for analysis
+    Data Access Capabilities:
+    ========================
+    - SPARCL (SPectra Analysis & Retrievable Catalog Lab): Full spectral data access
+    - Data Lab SQL: Fast queries against the complete DESI catalog (sparcl.main table)
+    - Coordinate-based searches: nearest object, cone search, box search
+    - Object filtering: by type (galaxy/quasar/star), redshift, data release
+    - Comprehensive metadata retrieval and spectral array access
+    
+    Auto-Save Features:
+    ==================  
+    - Search results automatically saved with descriptive filenames
+    - Full spectrum data automatically persisted to JSON files
+    - Structured file organization with unique IDs and metadata tracking
+    - Cross-platform file access (CLI and desktop MCP clients)
+    - Complete query reproducibility with saved parameters
+    
+    File Management:
+    ===============
+    - Unified registry system tracking all saved files
+    - Smart filename generation based on search parameters
+    - File retrieval by ID or filename with multiple format options
+    - Comprehensive statistics and file listing capabilities
+    - Organized storage in ~/desi_mcp_data/ (configurable via environment)
+    
+    Scientific Workflow:
+    ===================
+    1. Search objects → auto-saved catalog data  
+    2. Select interesting objects → retrieve full spectra → auto-saved spectral data
+    3. Manage and analyze saved data using file tools
+    4. All data includes metadata for scientific reproducibility
+    
+    Integration Notes:
+    =================
+    - Works with Claude Desktop, Cline, and other MCP clients
+    - Handles network issues and service outages gracefully
+    - Provides detailed error messages for debugging
+    - Supports both small targeted queries and large survey-scale searches
     """
     
     def __init__(self, base_dir: str = None):
         """
         Initialize the DESI MCP Server with SPARCL client connection and file management.
         
+        Sets up connections to DESI data services and creates the structured file storage
+        system for automatic data persistence. Gracefully handles cases where external
+        services are unavailable.
+        
         Args:
-            base_dir: Base directory for file storage (defaults to ~/desi_mcp_data)
+            base_dir (str, optional): Base directory for file storage. If not specified,
+                                    uses DESI_MCP_DATA_DIR environment variable or 
+                                    defaults to ~/desi_mcp_data/
+        
+        Attributes:
+            sparcl_client: SPARCL client for spectrum retrieval (None if unavailable)
+            base_dir: Path object for file storage directory
+            registry: Dictionary tracking all saved files with metadata
         """
         self.sparcl_client = None
         
@@ -147,17 +188,69 @@ class DESIMCPServer:
         metadata: Dict = None
     ) -> Dict[str, Any]:
         """
-        Save data with automatic organization and metadata tracking.
+        Save data with automatic organization, metadata tracking, and file registry management.
+        
+        This method is the core of the auto-save system, called automatically by search_objects
+        and get_spectrum_by_id tools. It handles file naming, organization, and registry updates
+        to provide seamless data persistence for DESI astronomical data.
+        
+        Features:
+        =========
+        - Automatic file type detection and proper extensions
+        - Filename sanitization for cross-platform compatibility  
+        - Unique file ID generation for easy retrieval
+        - Complete metadata tracking with timestamps
+        - Registry updates for file management tools
+        - Multiple data format support (JSON, CSV, NumPy arrays)
+        
+        Auto-Save Integration:
+        =====================
+        - Called automatically by search_objects with search results and query metadata
+        - Called automatically by get_spectrum_by_id for full spectral data
+        - Generates descriptive filenames based on content (e.g., object types, coordinates)
+        - Preserves all query parameters for scientific reproducibility
         
         Args:
-            data: Data to save (dict, DataFrame, numpy array, etc.)
-            filename: Base filename (will be sanitized)
-            file_type: Type of file (json, csv, npy, auto-detect)
-            description: Human-readable description
-            metadata: Additional metadata to store
+            data (Any): Data to save - dict, list, DataFrame, numpy array, etc.
+                       For search results: includes query metadata and object list
+                       For spectra: includes metadata and wavelength/flux arrays
+            filename (str): Base filename (will be sanitized and may get extension)
+            file_type (str): File format - 'json', 'csv', 'npy', or 'auto' for detection
+            description (str, optional): Human-readable description for file listing
+            metadata (Dict, optional): Additional metadata to store with file record
         
         Returns:
-            Dictionary with file information and status
+            Dict[str, Any]: Status and file information containing:
+                - status: 'success' or 'error'
+                - file_id: Unique identifier for retrieval  
+                - filename: Final sanitized filename with extension
+                - filepath: Complete path to saved file
+                - size_bytes: File size for statistics
+                - created: ISO timestamp of creation
+                - description: File description for management
+                - error: Error message if status is 'error'
+        
+        Examples:
+            # Auto-save search results (called internally)
+            result = server.save_file(
+                data={'query': {...}, 'results': [...]},
+                filename='desi_search_cone_ra10.68_dec41.27_GALAXY_25objs_20241231_143022',
+                description='DESI galaxy search near M31'
+            )
+            
+            # Auto-save spectrum data (called internally)  
+            result = server.save_file(
+                data={'metadata': {...}, 'data': {'wavelength': [...], 'flux': [...]}},
+                filename='spectrum_GALAXY_1.234_abcd1234_20241231_143022',
+                description='DESI galaxy spectrum at z=1.234'
+            )
+        
+        Notes:
+            - Files saved to base_dir (~/desi_mcp_data/ by default)
+            - Registry automatically updated for list_files and file_statistics
+            - File IDs can be used with retrieve_data for loading
+            - All saved files include creation timestamps and descriptions
+            - Cross-platform filename sanitization ensures compatibility
         """
         # Sanitize filename
         safe_filename = "".join(c for c in filename if c.isalnum() or c in '._-')
@@ -250,14 +343,84 @@ class DESIMCPServer:
         return_type: str = 'auto'
     ) -> Dict[str, Any]:
         """
-        Load a file by ID or filename.
+        Load a previously saved file by ID or filename with flexible return format options.
+        
+        This method powers the retrieve_data tool, providing access to auto-saved search
+        results and spectrum data. It supports multiple return formats and includes
+        complete file metadata for analysis workflows.
+        
+        Supported Identifiers:
+        =====================
+        - File ID: 12-character unique identifier (e.g., 'a1b2c3d4e5f6')
+        - Filename: Complete filename including extension (e.g., 'desi_search_cone_ra10.68_dec41.27_GALAXY_25objs_20241231_143022.json')
+        - Partial filename: System searches for matches
+        
+        Return Format Options:
+        =====================
+        - 'auto': Smart format based on file type (dicts for JSON, DataFrames for CSV)
+        - 'raw': Exact file contents without processing
+        - 'dataframe': Force conversion to pandas DataFrame (for structured data)
+        - 'array': Force conversion to numpy array (for numerical data)
+        
+        Data Types Handled:
+        ==================
+        - Search results: Complete query metadata + object catalogs
+        - Spectrum data: Wavelength/flux arrays + astronomical metadata  
+        - General JSON: Any structured data saved by the system
+        - CSV files: Tabular data with pandas integration
+        - NumPy arrays: Numerical data with array operations
         
         Args:
-            identifier: File ID or filename
-            return_type: How to return data (auto, raw, dataframe, array)
+            identifier (str): File ID (12-char hash) or filename to retrieve
+                             Examples: 'a1b2c3d4e5f6' or 'spectrum_GALAXY_1.234_abcd1234.json'
+            return_type (str): Format for returned data:
+                              'auto' (smart), 'raw' (unchanged), 'dataframe', 'array'
         
         Returns:
-            Dictionary with file data and metadata
+            Dict[str, Any]: Load result containing:
+                - status: 'success' or 'error'
+                - data: File contents in requested format
+                - metadata: Complete file record (ID, filename, size, created, description)
+                - file_type: Original file format (json, csv, npy)
+                - size_bytes: File size for reference
+                - error: Detailed error message if status is 'error'
+        
+        Examples:
+            # Load search results by filename
+            result = server.load_file(
+                'desi_search_cone_ra10.68_dec41.27_GALAXY_25objs_20241231_143022.json'
+            )
+            if result['status'] == 'success':
+                search_data = result['data']
+                objects = search_data['results']  # List of found objects
+                query_info = search_data['query']  # Original query parameters
+            
+            # Load spectrum data by file ID
+            result = server.load_file('a1b2c3d4e5f6', return_type='raw')
+            if result['status'] == 'success':
+                spectrum = result['data']
+                wavelength = spectrum['data']['wavelength']
+                flux = spectrum['data']['flux']
+                metadata = spectrum['metadata']
+            
+            # Load as DataFrame for analysis
+            result = server.load_file('object_catalog.csv', return_type='dataframe')
+            df = result['data']  # pandas DataFrame ready for analysis
+        
+        Integration with retrieve_data Tool:
+        ===================================
+        This method is called by the retrieve_data MCP tool, which provides:
+        - File existence validation and helpful error messages
+        - Format conversion for different analysis needs
+        - Metadata access for file management
+        - Cross-platform file access for MCP clients
+        
+        Notes:
+            - Files are located via the registry system for fast lookup
+            - Missing files return descriptive error messages
+            - Large files are handled efficiently with streaming when possible
+            - File metadata includes creation time, description, and original query parameters
+            - Compatible with files saved by search_objects and get_spectrum_by_id auto-save
         """
         # Find file record
         file_record = None
@@ -720,10 +883,66 @@ async def search_objects_sql(
     **kwargs
 ):
     """
-    Search DESI objects using Data Lab SQL queries (no limits on results).
-    Automatically saves results by default.
+    Search DESI astronomical objects using Data Lab SQL queries with automatic file saving.
     
-    For queries expected to return very large datasets, use async_query=True.
+    This function provides comprehensive search capabilities across the full DESI catalog
+    using the sparcl.main table in Data Lab. Results are automatically saved to JSON
+    files by default with structured metadata for later retrieval and analysis.
+    
+    Search Modes:
+    =============
+    1. Nearest Object Search: Provide ra, dec (no radius) - finds closest object within 0.1°
+    2. Cone Search: Provide ra, dec, radius - finds all objects within specified radius  
+    3. Box Search: Provide ra_min, ra_max, dec_min, dec_max - rectangular region search
+    4. All-Sky Search: No coordinates - searches entire catalog (use filters to limit)
+    
+    Auto-Save Behavior:
+    ==================
+    - By default (auto_save=True), creates JSON file with descriptive filename
+    - Filename format: "desi_search_{search_type}_{filters}_{num_objects}_{timestamp}.json"
+    - Includes complete query metadata, parameters, and all search results
+    - Returns file ID and path for easy retrieval with retrieve_data() tool
+    
+    Args:
+        ra (float, optional): Right Ascension in decimal degrees (0-360)
+        dec (float, optional): Declination in decimal degrees (-90 to +90)
+        radius (float, optional): Search radius in degrees for cone search
+        ra_min, ra_max, dec_min, dec_max (float, optional): Box search boundaries
+        
+        object_types (list[str], optional): Filter by type ['GALAXY', 'QSO', 'STAR']
+        redshift_min, redshift_max (float, optional): Redshift range constraints  
+        data_releases (list[str], optional): Specific data releases to search
+        
+        auto_save (bool): Automatically save results to file (default: True)
+        output_file (str, optional): Custom filename (auto-generated if not specified)
+        async_query (bool): Use asynchronous query for very large datasets
+        **kwargs: Additional query parameters (for future extensibility)
+    
+    Returns:
+        list[types.TextContent]: Formatted response containing:
+            - Summary of found objects with coordinates, redshifts, types
+            - SPARCL IDs for detailed spectrum retrieval
+            - Distance information for coordinate-based searches
+            - Auto-save file information (ID, filename, size, location)
+            - Instructions for data retrieval and next steps
+    
+    Examples:
+        # Find nearest galaxy to specific coordinates
+        search_objects_sql(ra=10.68, dec=41.27, object_types=['GALAXY'])
+        
+        # Cone search for high-redshift quasars  
+        search_objects_sql(ra=150.0, dec=2.0, radius=0.1, 
+                          object_types=['QSO'], redshift_min=2.0)
+        
+        # Box search without auto-save
+        search_objects_sql(ra_min=10, ra_max=11, dec_min=40, dec_max=41, 
+                          auto_save=False)
+    
+    Note:
+        - Coordinate searches are automatically sorted by distance (nearest first)
+        - Large result sets should use async_query=True for better performance
+        - All saved files include query reproducibility metadata
+        - Use retrieve_data() with returned file ID to load results for analysis
     """
     
     if not DATALAB_AVAILABLE:
@@ -932,112 +1151,130 @@ async def search_objects_sql(
 @server.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextContent]:
     """
-    Execute DESI astronomical data access tools with comprehensive parameter validation and error handling.
+    Execute DESI astronomical data access tools with unified file management and auto-save functionality.
     
     This function serves as the main entry point for all DESI data operations through the MCP server.
-    It provides access to the Dark Energy Spectroscopic Instrument (DESI) survey data via Data Lab
-    SQL queries for unlimited access to the full catalog.
+    It provides access to the Dark Energy Spectroscopic Instrument (DESI) survey data with automatic
+    data persistence and structured file management for seamless analysis workflows.
     
     Available Tools:
     ===============
     
     1. "search_objects"
-       - Primary tool for searching DESI astronomical objects
-       - Supports multiple search modes: nearest object, cone search, box search
-       - Flexible filtering by object type, redshift, data release
-       - Can save results to JSON files with optional spectral arrays
-       - Uses Data Lab SQL for fast, unlimited access to the full DESI catalog
+       - Primary tool for searching DESI astronomical objects via Data Lab SQL
+       - Supports multiple search modes: nearest object, cone search, box search, all-sky
+       - Flexible filtering by object type, redshift, data release, and custom constraints
+       - AUTOMATIC SAVING: Results saved to JSON with descriptive filenames by default
+       - Returns file ID for easy retrieval with retrieve_data() tool
        
-    2. "get_spectrum_by_id"
+    2. "get_spectrum_by_id"  
        - Retrieves detailed spectrum information using SPARCL UUID
-       - Returns metadata summary or full spectral data (wavelength/flux arrays)
-       - Saves complete spectral data to JSON files for analysis
+       - Two formats: 'summary' (metadata only) or 'full' (complete spectral arrays)
+       - AUTOMATIC SAVING: Full spectra automatically saved to JSON files
+       - Includes wavelength, flux, model, and inverse variance arrays
     
-    Search Methods:
-    ==============
+    3. "retrieve_data"
+       - Load previously saved search results or spectrum data by file ID or filename
+       - Supports multiple return formats (auto, raw, dataframe, array)
+       - Provides access to file metadata and creation details
     
-    Data Lab SQL:
-    - Fast queries against sparcl.main table
+    4. "list_files" 
+       - List all saved DESI data files with filtering and sorting
+       - Filter by file type, filename patterns, or creation date
+       - Essential for managing accumulated search results and spectra
+    
+    5. "file_statistics"
+       - Get comprehensive file system statistics and storage usage
+       - Shows file counts by type, total storage, and recent files
+       - Useful for data management and cleanup planning
+    
+    Auto-Save Features:
+    ==================
+    - Search results: Automatically saved with descriptive filenames like:
+      "desi_search_cone_ra10.68_dec41.27_GALAXY_25objs_20241231_143022.json"
+    - Spectrum data: Automatically saved with format like:
+      "spectrum_GALAXY_1.234_abcd1234_20241231_143022.json"  
+    - All files include complete metadata for reproducibility
+    - Files stored in structured directory (~/desi_mcp_data/ by default)
+    - Auto-save can be disabled with auto_save=False parameter
+    
+    Data Access Methods:
+    ===================
+    
+    Data Lab SQL (search_objects):
+    - Fast queries against sparcl.main table  
     - Access to full DESI catalog with no row limits
     - Efficient distance-sorted coordinate searches using Q3C indexing
     - Supports asynchronous queries for large datasets
     
-    Coordinate Search Modes:
-    =======================
+    SPARCL Client (get_spectrum_by_id):
+    - Direct access to complete spectral data arrays
+    - Includes flux, wavelength, model, and uncertainty information
+    - Metadata with redshift, object type, survey information
     
-    1. Nearest Object Search:
-       - Parameters: ra, dec (no radius specified)
-       - Behavior: Finds closest object within 0.1° search radius
-       - Sorting: Always sorted by distance (nearest first)
-       
-    2. Cone Search:
-       - Parameters: ra, dec, radius
-       - Behavior: Finds all objects within specified radius
-       - Sorting: Always sorted by distance from search center
-       
-    3. Box Search:
-       - Parameters: ra_min, ra_max, dec_min, dec_max
-       - Behavior: Rectangular region search
-       - Sorting: Database order (no distance calculation)
+    File Management:
+    ===============
+    - Unified registry tracks all saved files with metadata
+    - Files organized with unique IDs and descriptive names
+    - Cross-platform file access (works in CLI and desktop environments)
+    - Retrieve data by file ID or filename for analysis
     
     Args:
         name (str): Tool name to execute. Must be one of:
-                   - "search_objects": Search for astronomical objects
-                   - "get_spectrum_by_id": Retrieve spectrum by SPARCL ID
+                   "search_objects", "get_spectrum_by_id", "retrieve_data", 
+                   "list_files", "file_statistics"
         
-        arguments (dict[str, Any]): Tool-specific parameters. For search_objects:
-            Coordinate Parameters:
-                ra (float): Right Ascension in decimal degrees (0-360)
-                dec (float): Declination in decimal degrees (-90 to +90)
-                radius (float): Search radius in degrees (optional for nearest search)
-                ra_min, ra_max, dec_min, dec_max (float): Box search boundaries
-            
-            Object Filters:
-                object_types (list[str]): Filter by type ['GALAXY', 'QSO', 'STAR']
-                redshift_min, redshift_max (float): Redshift range constraints
-                data_releases (list[str]): Specific data releases to search
-            
-            Output Control:
-                output_file (str): JSON filename to save results
-                async_query (bool): Use async for very large queries
+        arguments (dict[str, Any]): Tool-specific parameters:
+        
+            For search_objects:
+                ra, dec, radius: Coordinate search parameters
+                object_types: ['GALAXY', 'QSO', 'STAR'] filtering  
+                redshift_min/max: Redshift constraints
+                auto_save: Enable/disable automatic file saving (default: True)
+                output_file: Custom filename (auto-generated if not specified)
             
             For get_spectrum_by_id:
-                sparcl_id (str): SPARCL UUID identifier (required)
-                format (str): 'summary' for metadata, 'full' for spectral arrays
+                sparcl_id: SPARCL UUID identifier (required)
+                format: 'summary' or 'full' (default: 'summary')
+                auto_save: Auto-save full spectra (default: True for 'full')
+                
+            For retrieve_data:
+                identifier: File ID or filename to load
+                return_format: Data format preference
+                
+            For list_files:
+                file_type, pattern, limit: Filtering options
     
     Returns:
         list[types.TextContent]: Formatted response containing:
-            - Search results with object coordinates, redshifts, types
-            - SPARCL IDs for detailed spectrum retrieval
-            - Distance information for coordinate searches
-            - Error messages for failed operations
-    
-    Raises:
-        Exception: Propagated from underlying SPARCL or Data Lab operations
-                  with descriptive error messages for debugging
+            - Tool execution results with scientific data
+            - Auto-save confirmation with file IDs and locations  
+            - Instructions for data retrieval and next steps
+            - Error messages for failed operations with debugging info
     
     Examples:
-        # Find nearest galaxy
+        # Search and auto-save galaxy catalog
         await call_tool("search_objects", {
             "ra": 10.68, "dec": 41.27, "object_types": ["GALAXY"]
         })
         
-        # Cone search for quasars
-        await call_tool("search_objects", {
-            "ra": 150.0, "dec": 2.0, "radius": 0.1, 
-            "object_types": ["QSO"], "redshift_min": 2.0
-        })
-        
-        # Get full spectrum data
+        # Get full spectrum with auto-save
         await call_tool("get_spectrum_by_id", {
             "sparcl_id": "1270d3c4-9d36-11ee-94ad-525400ad1336",
             "format": "full"
         })
+        
+        # Load saved search results  
+        await call_tool("retrieve_data", {
+            "identifier": "desi_search_cone_ra10.68_dec41.27_GALAXY_25objs_20241231_143022.json"
+        })
     
     Notes:
         - All coordinate searches automatically sort by distance for accurate "nearest" results
-        - Large datasets should use async_query=True for better performance
-        - Output files contain query metadata for reproducibility
+        - Large datasets should use async_query=True for better performance  
+        - Auto-saved files contain complete query metadata for reproducibility
+        - Use list_files and file_statistics to manage accumulated data files
+        - All tools work consistently across CLI and desktop MCP clients
     """
     
     if not SPARCL_AVAILABLE:
@@ -1271,7 +1508,7 @@ File loaded: {metadata['filename']}
             stats = desi_server.get_statistics()
             response += f"\nStorage Statistics:\n"
             response += f"- Total files: {stats['total_files']}\n"
-            response += f"- Total size: {stats['total_size_bytes']:,} bytes\n"
+            response += f"- Total size: {stats['total_size_bytes'] / 1024 / 1024:.1f} MB\n"
             response += f"- By type: {stats['by_type']}\n"
             
             return [types.TextContent(type="text", text=response)]
