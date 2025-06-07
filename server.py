@@ -256,7 +256,7 @@ async def handle_list_tools() -> list[types.Tool]:
     return [
         types.Tool(
             name="search_objects",
-            description="Unified search interface for DESI astronomical objects using Data Lab SQL queries. No 24k limit - can access the full DESI catalog. Supports flexible constraints on coordinates (point or region), object properties (type, redshift), survey parameters, and any other DESI database field. Results can be saved to JSON. For large queries (>100k results), use async_query=True.",
+            description="Unified search interface for DESI astronomical objects using Data Lab SQL queries. Accesses the full DESI catalog without limits. Supports flexible constraints on coordinates (point or region), object properties (type, redshift), survey parameters, and any other DESI database field. Results can be saved to JSON. For large queries, use async_query=True.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -311,10 +311,6 @@ async def handle_list_tools() -> list[types.Tool]:
                     },
                     
                     # Output control
-                    "max_results": {
-                        "type": "integer",
-                        "description": "Maximum number of results to return"
-                    },
                     "output_file": {
                         "type": "string",
                         "description": "Filename to save results as JSON (will use structured file manager)"
@@ -327,11 +323,6 @@ async def handle_list_tools() -> list[types.Tool]:
                     "async_query": {
                         "type": "boolean",
                         "description": "Use asynchronous query for large datasets",
-                        "default": False
-                    },
-                    "use_sparcl_client": {
-                        "type": "boolean",
-                        "description": "Use SPARCL client for cross-survey searches (DESI + BOSS + SDSS)",
                         "default": False
                     }
                 },
@@ -442,283 +433,7 @@ async def handle_list_tools() -> list[types.Tool]:
         )
     ]
 
-def format_search_results(found, show_limit=10):
-    """
-    Format SPARCL search results into a human-readable text summary.
-    
-    This function processes the structured results returned by SPARCL client searches
-    and creates a formatted text representation suitable for display in terminals,
-    logs, or MCP client interfaces. It handles various field name variations that
-    may exist in different SPARCL data releases and provides graceful fallbacks
-    for missing data.
-    
-    The function extracts key astronomical information including object type,
-    redshift, coordinates, and SPARCL identifiers, formatting them into a
-    standardized summary format.
-    
-    Args:
-        found: SPARCL search result object containing a 'records' attribute
-               with list of result dictionaries. Typically returned by
-               SparclClient.find() calls.
-        show_limit (int, optional): Maximum number of individual results to 
-                                   display in detail. Defaults to 10. Additional
-                                   results are summarized with a count.
-    
-    Returns:
-        str: Formatted text summary containing:
-             - Total count of objects found
-             - Up to 'show_limit' detailed object entries showing:
-               * Sequential number (1, 2, 3, ...)
-               * Object type (GALAXY, QSO, STAR, etc.)
-               * Spectroscopic redshift (z value)
-               * Sky coordinates (RA, Dec) if available
-               * SPARCL UUID for detailed retrieval
-             - Summary line for remaining objects if count exceeds show_limit
-    
-    """
-    if not hasattr(found, 'records') or not found.records:
-        return "No objects found matching the search criteria."
-    
-    summary = f"Found {len(found.records)} objects:\n\n"
-    
-    for i, record in enumerate(found.records[:show_limit]):
-        # Use direct SPARCL field access
-        obj_type = record.spectype
-        redshift = record.redshift
-        ra = record.ra
-        dec = record.dec
-        sparcl_id = record.sparcl_id
-        
-        summary += f"{i+1:2d}. {obj_type} at z={redshift}"
-        if ra is not None and dec is not None:
-            summary += f" ({ra:.4f}, {dec:.4f})"
-        if sparcl_id is not None:
-            # Show only first few chars of UUID for readability
-            short_id = str(sparcl_id)[:8] + "..." if len(str(sparcl_id)) > 8 else str(sparcl_id)
-            summary += f" [ID: {short_id}]"
-        summary += "\n"
-    
-    if len(found.records) > show_limit:
-        summary += f"\n... and {len(found.records) - show_limit} more objects"
-    
-    return summary
-
-async def search_objects_sparcl(
-    ra: float = None,
-    dec: float = None,
-    radius: float = None,
-    ra_min: float = None,
-    ra_max: float = None,
-    dec_min: float = None,
-    dec_max: float = None,
-    object_types: list = None,
-    redshift_min: float = None,
-    redshift_max: float = None,
-    data_releases: list = None,
-    max_results: int = None,
-    output_file: str = None,
-    **kwargs
-):
-    """
-    Search DESI objects using SPARCL client (searches ALL surveys: DESI + BOSS + SDSS).
-    """
-    
-    if not SPARCL_AVAILABLE:
-        return [types.TextContent(
-            type="text",
-            text="Error: SPARCL client not available. Please install with: pip install sparclclient"
-        )]
-    
-    if not desi_server.sparcl_client:
-        return [types.TextContent(
-            type="text",
-            text="Error: SPARCL client could not be initialized."
-        )]
-    
-    # Build SPARCL constraints
-    constraints = {}
-    outfields = ['sparcl_id', 'ra', 'dec', 'redshift', 'redshift_err', 'spectype', 'data_release', 'targetid']
-    
-    # Coordinate constraints
-    if ra is not None and dec is not None:
-        if radius is None:
-            # For nearest searches, use larger radius and we'll sort by distance
-            search_radius = 0.1  # 0.1 degrees
-        else:
-            search_radius = radius
-        
-        # SPARCL uses box constraints, so convert circle to box
-        constraints['ra'] = [ra - search_radius, ra + search_radius]
-        constraints['dec'] = [dec - search_radius, dec + search_radius]
-        
-    elif all(x is not None for x in [ra_min, ra_max, dec_min, dec_max]):
-        constraints['ra'] = [ra_min, ra_max]
-        constraints['dec'] = [dec_min, dec_max]
-    
-    # Object type constraints
-    if object_types:
-        constraints['spectype'] = [t.upper() for t in object_types]
-    
-    # Redshift constraints
-    if redshift_min is not None or redshift_max is not None:
-        redshift_range = []
-        if redshift_min is not None:
-            redshift_range.append(redshift_min)
-        if redshift_max is not None:
-            redshift_range.append(redshift_max)
-        constraints['redshift'] = redshift_range
-    
-    # Data release constraints
-    if data_releases:
-        constraints['data_release'] = data_releases
-    
-    # Execute SPARCL search
-    try:
-        limit = max_results if max_results else 500
-        
-        found = desi_server.sparcl_client.find(
-            outfields=outfields,
-            constraints=constraints,
-            limit=limit
-        )
-        
-        # Convert to list format for consistency
-        results_list = []
-        for record in found.records:
-            obj_dict = {
-                'sparcl_id': record.sparcl_id,
-                'ra': record.ra,
-                'dec': record.dec,
-                'redshift': record.redshift,
-                'redshift_err': record.redshift_err,
-                'spectype': record.spectype,
-                'data_release': record.data_release,
-                'targetid': getattr(record, 'targetid', None)
-            }
-            
-            # Calculate distance for nearest searches
-            if ra is not None and dec is not None and radius is None:
-                import math
-                # Calculate angular distance in arcseconds
-                ra_diff = (record.ra - ra) * math.cos(math.radians(dec))
-                dec_diff = record.dec - dec
-                distance_arcsec = math.sqrt(ra_diff**2 + dec_diff**2) * 3600
-                obj_dict['distance_arcsec'] = distance_arcsec
-            
-            results_list.append(obj_dict)
-        
-        # Sort by distance for nearest searches
-        if ra is not None and dec is not None and radius is None:
-            results_list.sort(key=lambda x: x.get('distance_arcsec', float('inf')))
-        
-        # Save to file if requested
-        if output_file:
-            import json
-            from datetime import datetime
-            
-            # Save directly to current working directory
-            search_data = {
-                'query': {
-                    'method': 'SPARCL client',
-                    'constraints': constraints,
-                    'timestamp': datetime.now().isoformat()
-                },
-                'metadata': {
-                    'total_found': len(results_list),
-                    'surveys_searched': 'ALL (DESI + BOSS + SDSS)',
-                    'method': 'SPARCL client'
-                },
-                'results': results_list
-            }
-            
-            # Try to save to multiple possible writable locations
-            save_result = None
-            save_attempts = [
-                Path(output_file),  # Current directory (Claude Desktop working dir)
-                Path.home() / output_file,  # User's home directory
-                Path('/tmp') / output_file,  # Temp directory (Unix/Linux/Mac)
-                Path.cwd() / 'downloads' / output_file,  # Downloads subdirectory
-            ]
-            
-            # Add Windows temp if on Windows
-            import tempfile
-            save_attempts.append(Path(tempfile.gettempdir()) / output_file)
-            
-            for attempt_path in save_attempts:
-                try:
-                    # Create parent directory if it doesn't exist
-                    attempt_path.parent.mkdir(parents=True, exist_ok=True)
-                    
-                    with open(attempt_path, 'w') as f:
-                        json.dump(search_data, f, indent=2)
-                    
-                    file_size = attempt_path.stat().st_size
-                    save_result = {
-                        'status': 'success',
-                        'filename': output_file,
-                        'size_bytes': file_size,
-                        'path': str(attempt_path.absolute()),
-                        'location': str(attempt_path.parent)
-                    }
-                    break  # Success! Stop trying other locations
-                    
-                except (PermissionError, OSError) as e:
-                    # Try next location
-                    continue
-            
-            # If all save attempts failed, note that we'll return full data instead
-            if save_result is None:
-                save_result = {
-                    'status': 'failed',
-                    'error': 'All writable locations failed - returning full data in response',
-                    'filename': output_file
-                }
-        else:
-            save_result = None
-        
-        # Format response
-        response = f"Found {len(results_list)} objects using SPARCL client\n"
-        response += f"(Searched ALL surveys: DESI + BOSS + SDSS)\n\n"
-        
-        for i, obj in enumerate(results_list[:25]):
-            response += f"{i+1}. {obj.get('spectype', 'N/A')} at "
-            response += f"({obj.get('ra', 0):.4f}, {obj.get('dec', 0):.4f}), "
-            response += f"z={obj.get('redshift', 0):.4f} "
-            response += f"[{obj.get('data_release', 'N/A')}]"
-            
-            # Show distance if calculated (for nearest searches)
-            if 'distance_arcsec' in obj:
-                response += f" - Distance: {obj.get('distance_arcsec', 0):.2f}″"
-            
-            response += "\n"
-            response += f"   SPARCL ID: {obj.get('sparcl_id', 'N/A')}\n"
-            response += f"   Target ID: {obj.get('targetid', 'N/A')}\n"
-        
-        if len(results_list) > 25:
-            response += f"\n... and {len(results_list) - 25} more objects"
-        
-        # Add file info if saved
-        if output_file and save_result and save_result['status'] == 'success':
-            response += f"\n\nSEARCH RESULTS SAVED:\n"
-            response += f"- Filename: {save_result['filename']}\n"
-            response += f"- Full path: {save_result['path']}\n"
-            response += f"- Size: {save_result['size_bytes']:,} bytes\n"
-            response += f"- Claude Desktop repl access: window.fs.readFile('{save_result['path']}')\n"
-        
-        if len(results_list) > 0:
-            response += f"\n\nTo get detailed spectrum data, use get_spectrum_by_id with one of the SPARCL IDs above."
-        
-        return [types.TextContent(type="text", text=response)]
-        
-    except Exception as e:
-        logger.error(f"SPARCL client error: {str(e)}")
-        return [types.TextContent(
-            type="text",
-            text=f"SPARCL client error: {str(e)}"
-        )]
-
 async def search_objects_sql(
-    # Same parameters as before
     ra: float = None,
     dec: float = None,
     radius: float = None,
@@ -730,15 +445,14 @@ async def search_objects_sql(
     redshift_min: float = None,
     redshift_max: float = None,
     data_releases: list = None,
-    max_results: int = None,
     output_file: str = None,
     async_query: bool = False,  # For large queries
     **kwargs
 ):
     """
-    Search DESI objects using Data Lab SQL queries (no 24k limit).
+    Search DESI objects using Data Lab SQL queries (no limits on results).
     
-    For queries returning >100k rows, use async_query=True.
+    For queries expected to return very large datasets, use async_query=True.
     """
     
     if not DATALAB_AVAILABLE:
@@ -812,13 +526,9 @@ async def search_objects_sql(
     if order_by_distance:
         sql += "ORDER BY distance_arcsec\n"
     
-    # Add LIMIT if specified
-    if max_results:
-        sql += f"LIMIT {max_results}\n"
-    
     # Execute query
     try:
-        if async_query or (max_results and max_results > 100000):
+        if async_query:
             # Use async for large queries
             jobid = qc.query(sql=sql, fmt='pandas', async_=True)
             
@@ -927,8 +637,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
     Execute DESI astronomical data access tools with comprehensive parameter validation and error handling.
     
     This function serves as the main entry point for all DESI data operations through the MCP server.
-    It provides access to the Dark Energy Spectroscopic Instrument (DESI) survey data via two methods:
-    Data Lab SQL queries (default, faster) and SPARCL client (backup, cross-survey).
+    It provides access to the Dark Energy Spectroscopic Instrument (DESI) survey data via Data Lab
+    SQL queries for unlimited access to the full catalog.
     
     Available Tools:
     ===============
@@ -938,7 +648,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
        - Supports multiple search modes: nearest object, cone search, box search
        - Flexible filtering by object type, redshift, data release
        - Can save results to JSON files with optional spectral arrays
-       - Uses Data Lab SQL by default for speed, SPARCL client for cross-survey searches
+       - Uses Data Lab SQL for fast, unlimited access to the full DESI catalog
        
     2. "get_spectrum_by_id"
        - Retrieves detailed spectrum information using SPARCL UUID
@@ -948,16 +658,11 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
     Search Methods:
     ==============
     
-    Data Lab SQL (Default):
+    Data Lab SQL:
     - Fast queries against sparcl.main table
     - Access to full DESI catalog with no row limits
     - Efficient distance-sorted coordinate searches using Q3C indexing
-    - Supports asynchronous queries for large datasets (>100k results)
-    
-    SPARCL Client (Backup):
-    - Cross-survey searches: DESI + BOSS + SDSS
-    - Box-constraint based spatial searches
-    - Broader data coverage but potentially slower
+    - Supports asynchronous queries for large datasets
     
     Coordinate Search Modes:
     =======================
@@ -995,10 +700,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
                 data_releases (list[str]): Specific data releases to search
             
             Output Control:
-                max_results (int): Maximum number of results to return
                 output_file (str): JSON filename to save results
-                async_query (bool): Use async for large queries (>100k results)
-                use_sparcl_client (bool): Use SPARCL instead of SQL (default: False)
+                async_query (bool): Use async for very large queries
             
             For get_spectrum_by_id:
                 sparcl_id (str): SPARCL UUID identifier (required)
@@ -1035,8 +738,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
     
     Notes:
         - All coordinate searches automatically sort by distance for accurate "nearest" results
-        - SPARCL client fallback ensures cross-survey compatibility when needed
-        - Large datasets (>100k results) should use async_query=True
+        - Large datasets should use async_query=True for better performance
         - Output files contain query metadata for reproducibility
     """
     
@@ -1055,14 +757,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
     try:
         if name == "search_objects":
             # Use Data Lab SQL by default, SPARCL as backup option
-            use_sparcl = arguments.get('use_sparcl_client', False)
-            
-            if use_sparcl:
-                # Use SPARCL client for cross-survey searches (DESI + BOSS + SDSS)
-                return await search_objects_sparcl(**arguments)
-            else:
-                # Use Data Lab SQL for fast queries on sparcl.main table
-                return await search_objects_sql(**arguments)
+            return await search_objects_sql(**arguments)
         
         elif name == "get_spectrum_by_id":
             sparcl_id = arguments["sparcl_id"]
