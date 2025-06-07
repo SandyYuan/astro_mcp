@@ -11,6 +11,7 @@ Features:
 - Retrieve specific spectra by ID
 - Search by object type
 - Query rectangular sky regions
+- Automatic data saving with structured file management
 - Basic data validation and error handling
 
 Usage:
@@ -23,7 +24,7 @@ from typing import Any, Dict, List, Optional
 import json
 import os
 import hashlib
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 import pandas as pd
 import numpy as np
@@ -57,27 +58,32 @@ except ImportError:
     DATALAB_AVAILABLE = False
     logger.warning("Data Lab query client not available - install with: pip install datalab")
 
-# Initialize server and DESI client
+# Initialize server
 server = Server("desi-basic")
-# File registry for tracking all saved files
-FILE_REGISTRY = {}
 
 class DESIMCPServer:
     """
-    DESI MCP Server - A Model Context Protocol server for DESI astronomical data access.
+    Unified DESI MCP Server - A Model Context Protocol server for DESI astronomical data access
+    with integrated file management.
     
     This server provides programmatic access to the Dark Energy Spectroscopic Instrument (DESI)
     survey data through the SPARCL (SPectra Analysis & Retrievable Catalog Lab) interface.
     DESI is a major astronomical survey that has observed millions of galaxies, quasars, and stars
     to create the largest 3D map of the universe.
+    
+    Features:
+    - Object search with automatic data saving
+    - Spectrum retrieval with automatic data saving
+    - Structured file management and organization
+    - File retrieval for analysis
     """
-    def __init__(self):
+    
+    def __init__(self, base_dir: str = None):
         """
-        Initialize the DESI MCP Server with SPARCL client connection.
+        Initialize the DESI MCP Server with SPARCL client connection and file management.
         
-        Attempts to create a connection to the SPARCL service for accessing DESI data.
-        The initialization will gracefully handle cases where the SPARCL client is
-        unavailable due to network issues, missing dependencies, or service outages.
+        Args:
+            base_dir: Base directory for file storage (defaults to ~/desi_mcp_data)
         """
         self.sparcl_client = None
         
@@ -90,8 +96,289 @@ class DESIMCPServer:
                 logger.error(f"Failed to initialize SPARCL client: {e}")
                 self.sparcl_client = None
         
-        logger.info("DESI MCP Server initialized")
+        # Set up file management
+        if base_dir:
+            self.base_dir = Path(base_dir)
+        else:
+            # Use environment variable or default to user's home directory
+            env_dir = os.environ.get('DESI_MCP_DATA_DIR')
+            if env_dir:
+                self.base_dir = Path(env_dir)
+            else:
+                # Default to a subdirectory in user's home directory
+                self.base_dir = Path.home() / 'desi_mcp_data'
+        
+        self.base_dir = self.base_dir.expanduser().resolve()
+        self.base_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Initialize file registry
+        self._load_registry()
+        
+        logger.info(f"DESI MCP Server initialized with data directory: {self.base_dir}")
+    
+    def _load_registry(self):
+        """Load existing file registry or create new one."""
+        registry_path = self.base_dir / 'file_registry.json'
+        if registry_path.exists():
+            with open(registry_path, 'r') as f:
+                self.registry = json.load(f)
+        else:
+            self.registry = {
+                'files': {},
+                'statistics': {
+                    'total_files': 0,
+                    'total_size_bytes': 0,
+                    'by_type': {}
+                }
+            }
+    
+    def _save_registry(self):
+        """Save file registry to disk."""
+        registry_path = self.base_dir / 'file_registry.json'
+        with open(registry_path, 'w') as f:
+            json.dump(self.registry, f, indent=2)
+    
+    def save_file(
+        self,
+        data: Any,
+        filename: str,
+        file_type: str = 'auto',
+        description: str = None,
+        metadata: Dict = None
+    ) -> Dict[str, Any]:
+        """
+        Save data with automatic organization and metadata tracking.
+        
+        Args:
+            data: Data to save (dict, DataFrame, numpy array, etc.)
+            filename: Base filename (will be sanitized)
+            file_type: Type of file (json, csv, npy, auto-detect)
+            description: Human-readable description
+            metadata: Additional metadata to store
+        
+        Returns:
+            Dictionary with file information and status
+        """
+        # Sanitize filename
+        safe_filename = "".join(c for c in filename if c.isalnum() or c in '._-')
+        
+        # Auto-detect file type if needed
+        if file_type == 'auto':
+            if isinstance(data, dict) or isinstance(data, list):
+                file_type = 'json'
+            elif isinstance(data, pd.DataFrame):
+                file_type = 'csv'
+            elif isinstance(data, np.ndarray):
+                file_type = 'npy'
+            else:
+                file_type = 'json'  # Default
+        
+        # Ensure proper extension
+        if not safe_filename.endswith(f'.{file_type}'):
+            safe_filename = f"{safe_filename}.{file_type}"
+        
+        # Save directly to main directory (no subfolders)
+        filepath = self.base_dir / safe_filename
+        
+        # Save the file
+        try:
+            if file_type == 'json':
+                with open(filepath, 'w') as f:
+                    json.dump(data, f, indent=2)
+            elif file_type == 'csv':
+                if isinstance(data, pd.DataFrame):
+                    data.to_csv(filepath, index=False)
+                else:
+                    # Convert to DataFrame if possible
+                    pd.DataFrame(data).to_csv(filepath, index=False)
+            elif file_type == 'npy':
+                np.save(filepath, data)
+            else:
+                # Generic text save
+                with open(filepath, 'w') as f:
+                    f.write(str(data))
+            
+            file_size = filepath.stat().st_size
+            
+            # Generate unique file ID
+            file_id = hashlib.md5(f"{filepath}_{datetime.now().isoformat()}".encode()).hexdigest()[:12]
+            
+            # Create file record
+            file_record = {
+                'id': file_id,
+                'filename': safe_filename,
+                'filepath': str(filepath),
+                'file_type': file_type,
+                'size_bytes': file_size,
+                'created': datetime.now().isoformat(),
+                'description': description or f"Data file: {safe_filename}",
+                'metadata': metadata or {}
+            }
+            
+            # Update registry
+            self.registry['files'][file_id] = file_record
+            self.registry['statistics']['total_files'] += 1
+            self.registry['statistics']['total_size_bytes'] += file_size
+            
+            if file_type not in self.registry['statistics']['by_type']:
+                self.registry['statistics']['by_type'][file_type] = 0
+            self.registry['statistics']['by_type'][file_type] += 1
+            
+            self._save_registry()
+            
+            return {
+                'status': 'success',
+                'file_id': file_id,
+                'filename': safe_filename,
+                'filepath': str(filepath),
+                'file_type': file_type,
+                'size_bytes': file_size,
+                'created': datetime.now().isoformat(),
+                'description': file_record['description']
+            }
+            
+        except Exception as e:
+            return {
+                'status': 'error',
+                'error': str(e),
+                'filename': safe_filename
+            }
+    
+    def load_file(
+        self,
+        identifier: str,
+        return_type: str = 'auto'
+    ) -> Dict[str, Any]:
+        """
+        Load a file by ID or filename.
+        
+        Args:
+            identifier: File ID or filename
+            return_type: How to return data (auto, raw, dataframe, array)
+        
+        Returns:
+            Dictionary with file data and metadata
+        """
+        # Find file record
+        file_record = None
+        
+        # Check if identifier is a file ID
+        if identifier in self.registry['files']:
+            file_record = self.registry['files'][identifier]
+        else:
+            # Search by filename
+            for fid, record in self.registry['files'].items():
+                if record['filename'] == identifier:
+                    file_record = record
+                    break
+        
+        if not file_record:
+            return {
+                'status': 'error',
+                'error': f"File not found: {identifier}"
+            }
+        
+        filepath = Path(file_record['filepath'])
+        if not filepath.exists():
+            return {
+                'status': 'error',
+                'error': f"File no longer exists: {filepath}"
+            }
+        
+        try:
+            # Load based on file type
+            file_type = file_record['file_type']
+            
+            if file_type == 'json':
+                with open(filepath, 'r') as f:
+                    data = json.load(f)
+            elif file_type == 'csv':
+                data = pd.read_csv(filepath)
+                if return_type != 'dataframe':
+                    data = data.to_dict('records')
+            elif file_type == 'npy':
+                data = np.load(filepath)
+                if return_type != 'array':
+                    data = data.tolist()
+            else:
+                with open(filepath, 'r') as f:
+                    data = f.read()
+            
+            return {
+                'status': 'success',
+                'data': data,
+                'metadata': file_record,
+                'file_type': file_type,
+                'size_bytes': file_record['size_bytes']
+            }
+            
+        except Exception as e:
+            return {
+                'status': 'error',
+                'error': str(e),
+                'filepath': str(filepath)
+            }
+    
+    def list_files(
+        self,
+        file_type: str = None,
+        pattern: str = None,
+        sort_by: str = 'created',
+        limit: int = None
+    ) -> List[Dict[str, Any]]:
+        """
+        List files with filtering and sorting.
+        
+        Args:
+            file_type: Filter by file type
+            pattern: Filter by filename pattern
+            sort_by: Sort key (created, size, filename)
+            limit: Maximum number of results
+        
+        Returns:
+            List of file records
+        """
+        files = list(self.registry['files'].values())
+        
+        # Apply filters
+        if file_type:
+            files = [f for f in files if f['file_type'] == file_type]
+        if pattern:
+            import fnmatch
+            files = [f for f in files if fnmatch.fnmatch(f['filename'], pattern)]
+        
+        # Sort
+        if sort_by == 'created':
+            files.sort(key=lambda x: x['created'], reverse=True)
+        elif sort_by == 'size':
+            files.sort(key=lambda x: x['size_bytes'], reverse=True)
+        elif sort_by == 'filename':
+            files.sort(key=lambda x: x['filename'])
+        
+        # Limit
+        if limit:
+            files = files[:limit]
+        
+        return files
+    
+    def get_statistics(self) -> Dict[str, Any]:
+        """Get file system statistics."""
+        stats = self.registry['statistics'].copy()
+        
+        # Add recent files
+        recent_files = sorted(
+            self.registry['files'].values(),
+            key=lambda x: x['created'],
+            reverse=True
+        )[:5]
+        stats['recent_files'] = [
+            {'filename': f['filename'], 'created': f['created']} 
+            for f in recent_files
+        ]
+        
+        return stats
 
+# Initialize unified server
 desi_server = DESIMCPServer()
 
 @server.list_resources()
@@ -256,7 +543,7 @@ async def handle_list_tools() -> list[types.Tool]:
     return [
         types.Tool(
             name="search_objects",
-            description="Unified search interface for DESI astronomical objects using Data Lab SQL queries. Accesses the full DESI catalog without limits. Supports flexible constraints on coordinates (point or region), object properties (type, redshift), survey parameters, and any other DESI database field. Results can be saved to JSON. For large queries, use async_query=True.",
+            description="Unified search interface for DESI astronomical objects using Data Lab SQL queries. Accesses the full DESI catalog without limits. Supports flexible constraints on coordinates (point or region), object properties (type, redshift), survey parameters, and any other DESI database field. Automatically saves results to JSON by default unless disabled.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -311,9 +598,14 @@ async def handle_list_tools() -> list[types.Tool]:
                     },
                     
                     # Output control
+                    "auto_save": {
+                        "type": "boolean",
+                        "description": "Automatically save search results to file (default: True)",
+                        "default": True
+                    },
                     "output_file": {
                         "type": "string",
-                        "description": "Filename to save results as JSON (will use structured file manager)"
+                        "description": "Custom filename for saved results (auto-generated if not specified)"
                     },
                     "include_arrays": {
                         "type": "boolean",
@@ -331,7 +623,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="get_spectrum_by_id",
-            description="Retrieve detailed information and full spectral data for a specific DESI spectrum using its unique SPARCL identifier.",
+            description="Retrieve detailed information and full spectral data for a specific DESI spectrum using its unique SPARCL identifier. Automatically saves full spectrum data to JSON by default.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -344,46 +636,23 @@ async def handle_list_tools() -> list[types.Tool]:
                         "description": "Output format: 'summary' for metadata only, 'full' for complete spectral arrays",
                         "enum": ["summary", "full"],
                         "default": "summary"
+                    },
+                    "auto_save": {
+                        "type": "boolean",
+                        "description": "Automatically save spectrum data to file (default: True for full format, False for summary)",
+                        "default": True
+                    },
+                    "output_file": {
+                        "type": "string",
+                        "description": "Custom filename for saved spectrum (auto-generated if not specified)"
                     }
                 },
                 "required": ["sparcl_id"]
             }
         ),
-        # New structured I/O tools
-        types.Tool(
-            name="save_data",
-            description="Save data using the structured file manager with automatic organization, metadata tracking, and file registry. Works consistently across CLI and desktop clients.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "filename": {
-                        "type": "string",
-                        "description": "Base filename (will be sanitized and organized automatically)"
-                    },
-                    "data": {
-                        "description": "Data to save (dict, list, DataFrame, etc.)"
-                    },
-                    "data_type": {
-                        "type": "string",
-                        "description": "File type: json, csv, npy, or auto-detect",
-                        "enum": ["json", "csv", "npy", "auto"],
-                        "default": "auto"
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "Human-readable description for the file"
-                    },
-                    "metadata": {
-                        "type": "object",
-                        "description": "Additional metadata to store with the file"
-                    }
-                },
-                "required": ["filename", "data"]
-            }
-        ),
         types.Tool(
             name="retrieve_data",
-            description="Retrieve data by file ID or filename using the structured file manager. Provides consistent access to saved files with metadata.",
+            description="Retrieve data by file ID or filename using the structured file manager. Provides consistent access to saved search results and spectrum data.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -403,7 +672,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="list_files",
-            description="List files with powerful filtering and sorting options. Much better than basic directory listing for managing saved data.",
+            description="List saved files with powerful filtering and sorting options. Much better than basic directory listing for managing saved DESI data.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -445,12 +714,14 @@ async def search_objects_sql(
     redshift_min: float = None,
     redshift_max: float = None,
     data_releases: list = None,
+    auto_save: bool = True,
     output_file: str = None,
     async_query: bool = False,  # For large queries
     **kwargs
 ):
     """
     Search DESI objects using Data Lab SQL queries (no limits on results).
+    Automatically saves results by default.
     
     For queries expected to return very large datasets, use async_query=True.
     """
@@ -555,30 +826,56 @@ async def search_objects_sql(
         # Convert to list of dicts for consistency
         results_list = result_df.to_dict('records')
         
-        # Save to file if requested
-        if output_file:
-            import json
-            from datetime import datetime
+        # Auto-save results if enabled
+        save_result = None
+        if auto_save:
+            # Auto-generate filename if not provided
+            if not output_file:
+                # Create descriptive filename based on search parameters
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                
+                if ra is not None and dec is not None:
+                    search_type = f"cone_ra{ra:.2f}_dec{dec:.2f}"
+                    if radius:
+                        search_type += f"_r{radius:.3f}deg"
+                elif all(x is not None for x in [ra_min, ra_max, dec_min, dec_max]):
+                    search_type = f"box_ra{ra_min:.1f}-{ra_max:.1f}_dec{dec_min:.1f}-{dec_max:.1f}"
+                else:
+                    search_type = "all_sky"
+                
+                if object_types:
+                    search_type += f"_{'_'.join(object_types)}"
+                
+                output_file = f"desi_search_{search_type}_{len(results_list)}objs_{timestamp}.json"
             
-            # Prepare data for structured file manager
+            # Prepare data for saving
             search_data = {
                 'query': {
                     'sql': sql,
-                    'timestamp': datetime.now().isoformat()
+                    'timestamp': datetime.now().isoformat(),
+                    'parameters': {
+                        'ra': ra, 'dec': dec, 'radius': radius,
+                        'ra_min': ra_min, 'ra_max': ra_max,
+                        'dec_min': dec_min, 'dec_max': dec_max,
+                        'object_types': object_types,
+                        'redshift_min': redshift_min, 'redshift_max': redshift_max,
+                        'data_releases': data_releases
+                    }
                 },
                 'metadata': {
                     'total_found': len(results_list),
-                    'method': 'Data Lab SQL (sparcl.main table)'
+                    'method': 'Data Lab SQL (sparcl.main table)',
+                    'search_type': 'cone' if order_by_distance else 'box' if all(x is not None for x in [ra_min, ra_max, dec_min, dec_max]) else 'all_sky'
                 },
                 'results': results_list
             }
             
-            # Use structured file manager for reliable saving
-            save_result = file_manager.save_file(
+            # Save using unified server method
+            save_result = desi_server.save_file(
                 data=search_data,
                 filename=output_file,
                 file_type='json',
-                description=f"Data Lab SQL search results: {len(results_list)} objects from DESI catalog",
+                description=f"DESI object search: {len(results_list)} objects from catalog",
                 metadata={
                     'search_method': 'Data Lab SQL',
                     'table': 'sparcl.main',
@@ -586,8 +883,6 @@ async def search_objects_sql(
                     'sql_query': sql
                 }
             )
-        else:
-            save_result = None
         
         # Format response
         response = f"Found {len(results_list)} objects using Data Lab SQL\n"
@@ -610,13 +905,16 @@ async def search_objects_sql(
         if len(results_list) > 25:
             response += f"\n... and {len(results_list) - 25} more objects"
         
-        # Add file info if saved
-        if output_file and save_result and save_result['status'] == 'success':
-            response += f"\n\nSEARCH RESULTS SAVED:\n"
+        # Add file info if auto-saved
+        if auto_save and save_result and save_result['status'] == 'success':
+            response += f"\n\nRESULTS AUTOMATICALLY SAVED:\n"
+            response += f"- File ID: {save_result['file_id']}\n"
             response += f"- Filename: {save_result['filename']}\n"
-            response += f"- Full path: {save_result['path']}\n"
             response += f"- Size: {save_result['size_bytes']:,} bytes\n"
-            response += f"- Claude Desktop repl access: window.fs.readFile('{save_result['path']}')\n"
+            response += f"- Location: {save_result['filepath']}\n"
+            response += f"\nRetrieve with: retrieve_data('{save_result['file_id']}') or retrieve_data('{save_result['filename']}')\n"
+        elif auto_save:
+            response += f"\n\nNote: Auto-save was enabled but failed to save results."
         
         if len(results_list) > 0:
             response += f"\n\nTo get detailed spectrum data, use get_spectrum_by_id with one of the SPARCL IDs above."
@@ -762,6 +1060,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
         elif name == "get_spectrum_by_id":
             sparcl_id = arguments["sparcl_id"]
             format_type = arguments.get("format", "summary")
+            auto_save = arguments.get("auto_save", True if format_type == "full" else False)
+            output_file = arguments.get("output_file")
             
             # Use correct SPARCL retrieve syntax with uuid_list and include parameters
             if format_type == "full":
@@ -845,19 +1145,29 @@ To get full spectrum data (flux, wavelength arrays), use format='full'
                     }
                 }
                 
-                # Save directly to current directory for Claude Desktop access
-                filename = f"spectrum_{spectrum.spectype}_{spectrum.redshift:.4f}_{sparcl_id[:8]}.json"
-                output_path = Path(filename)
-                with open(output_path, 'w') as f:
-                    json.dump(spectrum_data, f, indent=2)
-                
-                file_size = output_path.stat().st_size
-                save_result = {
-                    'status': 'success',
-                    'filename': filename,
-                    'size_bytes': file_size,
-                    'path': str(output_path.absolute())
-                }
+                # Auto-save if enabled
+                save_result = None
+                if auto_save:
+                    # Auto-generate filename if not provided
+                    if not output_file:
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        output_file = f"spectrum_{spectrum.spectype}_{spectrum.redshift:.4f}_{sparcl_id[:8]}_{timestamp}.json"
+                    
+                    # Save using unified server method
+                    save_result = desi_server.save_file(
+                        data=spectrum_data,
+                        filename=output_file,
+                        file_type='json',
+                        description=f"DESI spectrum: {spectrum.spectype} at z={spectrum.redshift:.4f}",
+                        metadata={
+                            'sparcl_id': sparcl_id,
+                            'object_type': spectrum.spectype,
+                            'redshift': spectrum.redshift,
+                            'data_release': spectrum.data_release,
+                            'wavelength_range': [wavelength.min(), wavelength.max()],
+                            'num_pixels': len(wavelength)
+                        }
+                    )
             
                 # Format response (NO large arrays in context)
                 response_text = f"""
@@ -879,11 +1189,21 @@ Number of Pixels: {len(wavelength):,}
 Flux Units: 10^-17 erg/s/cm²/Å
 Model Available: {model is not None}
 Inverse Variance Available: {ivar is not None}
-
-FILE SAVED:
-- Filename: {save_result['filename']}
-- Full path: {save_result['path']}\n"
 """
+                
+                # Add auto-save info
+                if auto_save and save_result and save_result['status'] == 'success':
+                    response_text += f"""
+SPECTRUM AUTOMATICALLY SAVED:
+- File ID: {save_result['file_id']}
+- Filename: {save_result['filename']}
+- Size: {save_result['size_bytes']:,} bytes
+- Location: {save_result['filepath']}
+
+Retrieve with: retrieve_data('{save_result['file_id']}') or retrieve_data('{save_result['filename']}')
+"""
+                elif auto_save:
+                    response_text += f"\n\nNote: Auto-save was enabled but failed to save spectrum."
                 
                 return [types.TextContent(type="text", text=response_text)]
             
@@ -894,41 +1214,11 @@ FILE SAVED:
                 )]
         
         # Handle structured I/O tools
-        elif name == "save_data":
-            filename = arguments["filename"]
-            data = arguments["data"]
-            data_type = arguments.get("data_type", "auto")
-            description = arguments.get("description")
-            metadata = arguments.get("metadata")
-            
-            result = file_manager.save_file(
-                data=data,
-                filename=filename,
-                file_type=data_type,
-                description=description,
-                metadata=metadata
-            )
-            
-            if result['status'] == 'success':
-                response = f"""
-File saved successfully:
-- ID: {result['file_id']}
-- Filename: {result['filename']}
-- Size: {result['size_bytes']:,} bytes
-- Location: {result['filepath']}
-
-Retrieve with: retrieve_data("{result['file_id']}") or retrieve_data("{result['filename']}")
-"""
-            else:
-                response = f"Error saving file: {result['error']}"
-            
-            return [types.TextContent(type="text", text=response)]
-        
         elif name == "retrieve_data":
             identifier = arguments["identifier"]
             return_format = arguments.get("return_format", "auto")
             
-            result = file_manager.load_file(identifier, return_type=return_format)
+            result = desi_server.load_file(identifier, return_type=return_format)
             
             if result['status'] == 'success':
                 metadata = result['metadata']
@@ -957,7 +1247,7 @@ File loaded: {metadata['filename']}
             pattern = arguments.get("pattern")
             limit = arguments.get("limit", 20)
             
-            files = file_manager.list_files(
+            files = desi_server.list_files(
                 file_type=file_type,
                 pattern=pattern,
                 limit=limit
@@ -978,7 +1268,7 @@ File loaded: {metadata['filename']}
                     response += "\n"
             
             # Add statistics
-            stats = file_manager.get_statistics()
+            stats = desi_server.get_statistics()
             response += f"\nStorage Statistics:\n"
             response += f"- Total files: {stats['total_files']}\n"
             response += f"- Total size: {stats['total_size_bytes']:,} bytes\n"
@@ -987,7 +1277,7 @@ File loaded: {metadata['filename']}
             return [types.TextContent(type="text", text=response)]
         
         elif name == "file_statistics":
-            stats = file_manager.get_statistics()
+            stats = desi_server.get_statistics()
             
             response = "DESI MCP File System Statistics\n"
             response += "=" * 40 + "\n\n"
@@ -1017,394 +1307,6 @@ File loaded: {metadata['filename']}
             type="text",
             text=f"Error executing {name}: {str(e)}"
         )]
-
-"""
-Structured I/O system that benefits all clients (CLI and Claude Desktop)
-"""
-class DESIFileManager:
-    """Centralized file management for DESI MCP server."""
-    
-    def __init__(self, base_dir: str = None):
-        if base_dir:
-            self.base_dir = Path(base_dir)
-        else:
-            # Use environment variable or default to user's home directory
-            env_dir = os.environ.get('DESI_MCP_DATA_DIR')
-            if env_dir:
-                self.base_dir = Path(env_dir)
-            else:
-                # Default to a subdirectory in user's home directory
-                self.base_dir = Path.home() / 'desi_mcp_data'
-        
-        self.base_dir = self.base_dir.expanduser().resolve()
-        
-        # Create main data directory
-        self.base_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Initialize file registry
-        self._load_registry()
-    
-    def _load_registry(self):
-        """Load existing file registry or create new one."""
-        registry_path = self.base_dir / 'file_registry.json'
-        if registry_path.exists():
-            with open(registry_path, 'r') as f:
-                self.registry = json.load(f)
-        else:
-            self.registry = {
-                'files': {},
-                'statistics': {
-                    'total_files': 0,
-                    'total_size_bytes': 0,
-                    'by_type': {}
-                }
-            }
-    
-    def _save_registry(self):
-        """Save file registry to disk."""
-        registry_path = self.base_dir / 'file_registry.json'
-        with open(registry_path, 'w') as f:
-            json.dump(self.registry, f, indent=2)
-    
-    def save_file(
-        self,
-        data: Any,
-        filename: str,
-        file_type: str = 'auto',
-        description: str = None,
-        metadata: Dict = None
-    ) -> Dict[str, Any]:
-        """
-        Save data with automatic organization and metadata tracking.
-        
-        Args:
-            data: Data to save (dict, DataFrame, numpy array, etc.)
-            filename: Base filename (will be sanitized)
-            file_type: Type of file (json, csv, npy, auto-detect)
-            description: Human-readable description
-            metadata: Additional metadata to store
-        
-        Returns:
-            Dictionary with file information and status
-        """
-        # Sanitize filename
-        safe_filename = "".join(c for c in filename if c.isalnum() or c in '._-')
-        
-        # Auto-detect file type if needed
-        if file_type == 'auto':
-            if isinstance(data, dict) or isinstance(data, list):
-                file_type = 'json'
-            elif isinstance(data, pd.DataFrame):
-                file_type = 'csv'
-            elif isinstance(data, np.ndarray):
-                file_type = 'npy'
-            else:
-                file_type = 'json'  # Default
-        
-        # Ensure proper extension
-        if not safe_filename.endswith(f'.{file_type}'):
-            safe_filename = f"{safe_filename}.{file_type}"
-        
-        # Save directly to main directory (no subfolders)
-        filepath = self.base_dir / safe_filename
-        
-        # Save the file
-        try:
-            if file_type == 'json':
-                with open(filepath, 'w') as f:
-                    json.dump(data, f, indent=2)
-            elif file_type == 'csv':
-                if isinstance(data, pd.DataFrame):
-                    data.to_csv(filepath, index=False)
-                else:
-                    # Convert to DataFrame if possible
-                    pd.DataFrame(data).to_csv(filepath, index=False)
-            elif file_type == 'npy':
-                np.save(filepath, data)
-            else:
-                # Generic text save
-                with open(filepath, 'w') as f:
-                    f.write(str(data))
-            
-            file_size = filepath.stat().st_size
-            
-            # Generate unique file ID
-            file_id = hashlib.md5(f"{filepath}_{datetime.now().isoformat()}".encode()).hexdigest()[:12]
-            
-            # Create file record
-            file_record = {
-                'id': file_id,
-                'filename': safe_filename,
-                'filepath': str(filepath),
-                'file_type': file_type,
-                'size_bytes': file_size,
-                'created': datetime.now().isoformat(),
-                'description': description or f"Data file: {safe_filename}",
-                'metadata': metadata or {}
-            }
-            
-            # Update registry
-            self.registry['files'][file_id] = file_record
-            self.registry['statistics']['total_files'] += 1
-            self.registry['statistics']['total_size_bytes'] += file_size
-            
-            if file_type not in self.registry['statistics']['by_type']:
-                self.registry['statistics']['by_type'][file_type] = 0
-            self.registry['statistics']['by_type'][file_type] += 1
-            
-            self._save_registry()
-            
-            return {
-                'status': 'success',
-                'file_id': file_id,
-                'filename': safe_filename,
-                'filepath': str(filepath),
-                'file_type': file_type,
-                'size_bytes': file_size,
-                'created': datetime.now().isoformat(),
-                'description': file_record['description']
-            }
-            
-        except Exception as e:
-            return {
-                'status': 'error',
-                'error': str(e),
-                'filename': safe_filename
-            }
-    
-    def load_file(
-        self,
-        identifier: str,
-        return_type: str = 'auto'
-    ) -> Dict[str, Any]:
-        """
-        Load a file by ID or filename.
-        
-        Args:
-            identifier: File ID or filename
-            return_type: How to return data (auto, raw, dataframe, array)
-        
-        Returns:
-            Dictionary with file data and metadata
-        """
-        # Find file record
-        file_record = None
-        
-        # Check if identifier is a file ID
-        if identifier in self.registry['files']:
-            file_record = self.registry['files'][identifier]
-        else:
-            # Search by filename
-            for fid, record in self.registry['files'].items():
-                if record['filename'] == identifier:
-                    file_record = record
-                    break
-        
-        if not file_record:
-            # For debugging, list available files
-            available_files = [
-                f"ID: {fid}, filename: {record['filename']}" 
-                for fid, record in self.registry['files'].items()
-            ]
-            return {
-                'status': 'error',
-                'error': f"File not found: {identifier}. Available files: {available_files[:5]}"  # Show first 5
-            }
-        
-        filepath = Path(file_record['filepath'])
-        if not filepath.exists():
-            return {
-                'status': 'error',
-                'error': f"File no longer exists: {filepath}"
-            }
-        
-        try:
-            # Load based on file type
-            file_type = file_record['file_type']
-            
-            if file_type == 'json':
-                with open(filepath, 'r') as f:
-                    data = json.load(f)
-            elif file_type == 'csv':
-                data = pd.read_csv(filepath)
-                if return_type != 'dataframe':
-                    data = data.to_dict('records')
-            elif file_type == 'npy':
-                data = np.load(filepath)
-                if return_type != 'array':
-                    data = data.tolist()
-            else:
-                with open(filepath, 'r') as f:
-                    data = f.read()
-            
-            return {
-                'status': 'success',
-                'data': data,
-                'metadata': file_record,
-                'file_type': file_type,
-                'size_bytes': file_record['size_bytes']
-            }
-            
-        except Exception as e:
-            return {
-                'status': 'error',
-                'error': str(e),
-                'filepath': str(filepath)
-            }
-    
-    def list_files(
-        self,
-        file_type: str = None,
-        pattern: str = None,
-        sort_by: str = 'created',
-        limit: int = None
-    ) -> List[Dict[str, Any]]:
-        """
-        List files with filtering and sorting.
-        
-        Args:
-            file_type: Filter by file type
-            pattern: Filter by filename pattern
-            sort_by: Sort key (created, size, filename)
-            limit: Maximum number of results
-        
-        Returns:
-            List of file records
-        """
-        files = list(self.registry['files'].values())
-        
-        # Apply filters
-        if file_type:
-            files = [f for f in files if f['file_type'] == file_type]
-        if pattern:
-            import fnmatch
-            files = [f for f in files if fnmatch.fnmatch(f['filename'], pattern)]
-        
-        # Sort
-        if sort_by == 'created':
-            files.sort(key=lambda x: x['created'], reverse=True)
-        elif sort_by == 'size':
-            files.sort(key=lambda x: x['size_bytes'], reverse=True)
-        elif sort_by == 'filename':
-            files.sort(key=lambda x: x['filename'])
-        
-        # Limit
-        if limit:
-            files = files[:limit]
-        
-        return files
-    
-    def get_statistics(self) -> Dict[str, Any]:
-        """Get file system statistics."""
-        stats = self.registry['statistics'].copy()
-        
-        # Add recent files
-        recent_files = sorted(
-            self.registry['files'].values(),
-            key=lambda x: x['created'],
-            reverse=True
-        )[:5]
-        stats['recent_files'] = [
-            {'filename': f['filename'], 'created': f['created']} 
-            for f in recent_files
-        ]
-        
-        return stats
-    
-    def cleanup_old_files(self, days: int = 30):
-        """Remove files older than specified days."""
-        from datetime import timedelta
-        
-        cutoff_date = datetime.now() - timedelta(days=days)
-        removed_count = 0
-        removed_size = 0
-        
-        for file_id, record in list(self.registry['files'].items()):
-            created_date = datetime.fromisoformat(record['created'])
-            if created_date < cutoff_date:
-                filepath = Path(record['filepath'])
-                if filepath.exists():
-                    removed_size += record['size_bytes']
-                    filepath.unlink()
-                
-                del self.registry['files'][file_id]
-                removed_count += 1
-        
-        # Update statistics
-        self.registry['statistics']['total_files'] -= removed_count
-        self.registry['statistics']['total_size_bytes'] -= removed_size
-        
-        self._save_registry()
-        
-        return {
-            'removed_files': removed_count,
-            'freed_bytes': removed_size
-        }
-
-    def export_to_cwd(
-        self,
-        identifier: str,
-        export_filename: str = None
-    ) -> Dict[str, Any]:
-        """
-        Export a file from structured storage to current working directory.
-        This allows Claude Desktop's repl environment to access the file with window.fs.readFile().
-        
-        Args:
-            identifier: File ID or filename in structured storage
-            export_filename: Optional custom filename for export
-        
-        Returns:
-            Dictionary with export status and file information
-        """
-        # Load file from structured storage
-        load_result = self.load_file(identifier, return_type='raw')
-        
-        if load_result['status'] != 'success':
-            return {
-                'status': 'error',
-                'error': f"Could not load file: {load_result['error']}"
-            }
-        
-        try:
-            # Get current working directory
-            cwd = Path.cwd()
-            
-            # Determine export filename
-            if export_filename:
-                final_filename = export_filename
-            else:
-                final_filename = load_result['metadata']['filename']
-            
-            export_path = cwd / final_filename
-            
-            # Copy file based on type
-            source_path = Path(load_result['metadata']['filepath'])
-            
-            # Simple file copy
-            import shutil
-            shutil.copy2(source_path, export_path)
-            
-            export_size = export_path.stat().st_size
-            
-            return {
-                'status': 'success',
-                'source_file_id': identifier,
-                'source_filename': load_result['metadata']['filename'],
-                'export_path': str(export_path),
-                'export_filename': final_filename,
-                'size_bytes': export_size,
-                'file_type': load_result['metadata']['file_type']
-            }
-            
-        except Exception as e:
-            return {
-                'status': 'error',
-                'error': str(e)
-            }
-
-# Initialize global file manager
-file_manager = DESIFileManager()
 
 async def main():
     """
