@@ -23,6 +23,7 @@ MANIFEST
 .env
 
 *_example_usage
+desi_mcp_implementation_plan.md
 
 # Virtual environments
 .env
