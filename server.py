@@ -29,7 +29,7 @@ from pydantic import AnyUrl
 
 # Import modular components
 from data_sources import DESIDataSource
-from io.preview import DataPreviewManager
+from data_io.preview import DataPreviewManager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
