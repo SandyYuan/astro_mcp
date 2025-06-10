@@ -100,11 +100,10 @@ class DESIMCPServer:
     
     File Management:
     ===============
-    - Unified registry system tracking all saved files
-    - Smart filename generation based on search parameters
-    - File retrieval by ID or filename with multiple format options
-    - Comprehensive statistics and file listing capabilities
-    - Organized storage in ~/desi_mcp_data/ (configurable via environment)
+    - Unified registry tracks all saved files with metadata
+    - Files organized with unique IDs and descriptive names
+    - Cross-platform file access (works in CLI and desktop environments)
+    - preview_data shows file structure and provides loading code examples
     
     Scientific Workflow:
     ===================
@@ -236,8 +235,7 @@ class DESIMCPServer:
             Dict[str, Any]: Status and file information containing:
                 - status: 'success' or 'error'
                 - file_id: Unique identifier for retrieval  
-                - filename: Final sanitized filename with extension
-                - filepath: Complete path to saved file
+                - filename: Complete path to saved file (full path)
                 - size_bytes: File size for statistics
                 - created: ISO timestamp of creation
                 - description: File description for management
@@ -261,10 +259,10 @@ class DESIMCPServer:
         Notes:
             - Files saved to base_dir (~/desi_mcp_data/ by default)
             - Registry automatically updated for list_files and file_statistics
-            - File IDs can be used with retrieve_data for loading
+            - File IDs can be used with preview_data for viewing file info
             - All files include complete metadata for scientific reproducibility
             - Cross-platform file access (works in CLI and desktop environments)
-            - Retrieve data by file ID or filename for analysis
+            - Filenames contain full paths and can be used directly for loading
         """
         # Sanitize filename
         safe_filename = "".join(c for c in filename if c.isalnum() or c in '._-')
@@ -310,11 +308,10 @@ class DESIMCPServer:
             # Generate unique file ID
             file_id = hashlib.md5(f"{filepath}_{datetime.now().isoformat()}".encode()).hexdigest()[:12]
             
-            # Create file record
+            # Create file record - store full path as filename
             file_record = {
                 'id': file_id,
-                'filename': safe_filename,
-                'filepath': str(filepath),
+                'filename': str(filepath),  # Full path as filename
                 'file_type': file_type,
                 'size_bytes': file_size,
                 'created': datetime.now().isoformat(),
@@ -336,8 +333,7 @@ class DESIMCPServer:
             return {
                 'status': 'success',
                 'file_id': file_id,
-                'filename': safe_filename,
-                'filepath': str(filepath),
+                'filename': str(filepath),  # Return full path as filename
                 'file_type': file_type,
                 'size_bytes': file_size,
                 'created': datetime.now().isoformat(),
@@ -359,9 +355,9 @@ class DESIMCPServer:
         """
         Load a previously saved file by ID or filename with flexible return format options.
         
-        This method powers the retrieve_data tool, providing access to auto-saved search
-        results and spectrum data. It supports multiple return formats and includes
-        complete file metadata for analysis workflows.
+        This is an internal method that can load complete file contents, but it's NOT exposed
+        as an MCP tool. The preview_data tool only shows file structure and metadata, not 
+        actual data loading for analysis.
         
         Supported Identifiers:
         =====================
@@ -376,65 +372,21 @@ class DESIMCPServer:
         - 'dataframe': Force conversion to pandas DataFrame (for structured data)
         - 'array': Force conversion to numpy array (for numerical data)
         
-        Data Types Handled:
-        ==================
-        - Search results: Complete query metadata + object catalogs
-        - Spectrum data: Wavelength/flux arrays + astronomical metadata  
-        - General JSON: Any structured data saved by the system
-        - CSV files: Tabular data with pandas integration
-        - NumPy arrays: Numerical data with array operations
-        
         Args:
             identifier (str): File ID (12-char hash) or filename to retrieve
-                             Examples: 'a1b2c3d4e5f6' or 'spectrum_GALAXY_1.234_abcd1234.json'
-            return_type (str): Format for returned data:
-                              'auto' (smart), 'raw' (unchanged), 'dataframe', 'array'
+            return_type (str): Format for returned data
         
         Returns:
             Dict[str, Any]: Load result containing:
                 - status: 'success' or 'error'
-                - data: File contents in requested format
-                - metadata: Complete file record (ID, filename, size, created, description)
-                - file_type: Original file format (json, csv, npy)
-                - size_bytes: File size for reference
-                - error: Detailed error message if status is 'error'
+                - data: Complete file contents in requested format
+                - metadata: File record information
+                - file_type: Original file format
+                - size_bytes: File size
         
-        Examples:
-            # Load search results by filename
-            result = server.load_file(
-                'desi_search_cone_ra10.68_dec41.27_GALAXY_25objs_20241231_143022.json'
-            )
-            if result['status'] == 'success':
-                search_data = result['data']
-                objects = search_data['results']  # List of found objects
-                query_info = search_data['query']  # Original query parameters
-            
-            # Load spectrum data by file ID
-            result = server.load_file('a1b2c3d4e5f6', return_type='raw')
-            if result['status'] == 'success':
-                spectrum = result['data']
-                wavelength = spectrum['data']['wavelength']
-                flux = spectrum['data']['flux']
-                metadata = spectrum['metadata']
-            
-            # Load as DataFrame for analysis
-            result = server.load_file('object_catalog.csv', return_type='dataframe')
-            df = result['data']  # pandas DataFrame ready for analysis
-        
-        Integration with retrieve_data Tool:
-        ===================================
-        This method is called by the retrieve_data MCP tool, which provides:
-        - File existence validation and helpful error messages
-        - Format conversion for different analysis needs
-        - Metadata access for file management
-        - Cross-platform file access for MCP clients
-        
-        Notes:
-            - Files are located via the registry system for fast lookup
-            - Missing files return descriptive error messages
-            - Large files are handled efficiently with streaming when possible
-            - File metadata includes creation time, description, and original query parameters
-            - Compatible with files saved by search_objects and get_spectrum_by_id auto-save
+        Note:
+            This method is not exposed as an MCP tool. Users need to manually load files
+            using the provided code examples from preview_data output.
         """
         # Find file record
         file_record = None
@@ -455,7 +407,7 @@ class DESIMCPServer:
                 'error': f"File not found: {identifier}"
             }
         
-        filepath = Path(file_record['filepath'])
+        filepath = Path(file_record['filename'])
         if not filepath.exists():
             return {
                 'status': 'error',
@@ -493,7 +445,7 @@ class DESIMCPServer:
             return {
                 'status': 'error',
                 'error': str(e),
-                'filepath': str(filepath)
+                'filename': str(filepath)
             }
     
     def list_files(
@@ -579,7 +531,7 @@ class DESIMCPServer:
                 'error': f"File not found: {identifier}"
             }
         
-        filepath = Path(file_record['filepath'])
+        filepath = Path(file_record['filename'])
         if not filepath.exists():
             return {
                 'status': 'error',
@@ -898,7 +850,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="preview_data",
-            description="Load previously saved search results or spectrum data by file ID or filename",
+            description="Shows file metadata, structure, and sample data with full file paths for easy loading",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -908,7 +860,7 @@ async def handle_list_tools() -> list[types.Tool]:
                     },
                     "preview_rows": {
                         "type": "integer",
-                        "description": "Number of rows/items to preview (default: 10)",
+                        "description": "Number of rows to show in preview (default: 10)",
                         "default": 10
                     }
                 },
@@ -983,7 +935,7 @@ async def search_objects_sql(
     - By default (auto_save=True), creates JSON file with descriptive filename
     - Filename format: "desi_search_{search_type}_{filters}_{num_objects}_{timestamp}.json"
     - Includes complete query metadata, parameters, and all search results
-    - Returns file ID and path for easy retrieval with retrieve_data() tool
+    - Returns file ID and path for easy retrieval with preview_data() tool
     
     Args:
         ra (float, optional): Right Ascension in decimal degrees (0-360)
@@ -1024,7 +976,7 @@ async def search_objects_sql(
         - Coordinate searches are automatically sorted by distance (nearest first)
         - Large result sets should use async_query=True for better performance
         - All saved files include query reproducibility metadata
-        - Use retrieve_data() with returned file ID to load results for analysis
+        - Use preview_data() with returned file ID to load results for analysis
     """
     
     if not DATALAB_AVAILABLE:
@@ -1212,8 +1164,9 @@ async def search_objects_sql(
             response += f"- File ID: {save_result['file_id']}\n"
             response += f"- Filename: {save_result['filename']}\n"
             response += f"- Size: {save_result['size_bytes']:,} bytes\n"
-            response += f"- Location: {save_result['filepath']}\n"
-            response += f"\nRetrieve with: retrieve_data('{save_result['file_id']}') or retrieve_data('{save_result['filename']}')\n"
+            response += f"- Location: {save_result['filename']}\n"
+            response += f"\nView file info: preview_data('{save_result['file_id']}') or preview_data('{save_result['filename']}')\n"
+            response += f"(preview_data shows structure and provides code examples for manual loading)\n"
         elif auto_save:
             response += f"\n\nNote: Auto-save was enabled but failed to save results."
         
@@ -1247,18 +1200,18 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
        - Supports multiple search modes: nearest object, cone search, box search, all-sky
        - Flexible filtering by object type, redshift, data release, and custom constraints
        - AUTOMATIC SAVING: Results saved to JSON with descriptive filenames by default
-       - Returns file ID for easy retrieval with retrieve_data() tool
+       - Returns file ID for easy retrieval with preview_data() tool
        
-    2. "get_spectrum_by_id"  
+    2. "get_spectrum_by_id"
        - Retrieves detailed spectrum information using SPARCL UUID
        - Two formats: 'summary' (metadata only) or 'full' (complete spectral arrays)
        - AUTOMATIC SAVING: Full spectra automatically saved to JSON files
        - Includes wavelength, flux, model, and inverse variance arrays
     
     3. "preview_data"
-       - Load previously saved search results or spectrum data by file ID or filename
-       - Supports multiple return formats (auto, raw, dataframe, array)
-       - Provides access to file metadata and creation details
+       - Shows file metadata, structure, and sample data with full file paths for easy loading
+       - Provides code examples for manual file loading but does NOT load data for analysis
+       - Useful for understanding file contents before writing custom loading code
     
     4. "list_files" 
        - List all saved DESI data files with filtering and sorting
@@ -1299,11 +1252,11 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
     - Unified registry tracks all saved files with metadata
     - Files organized with unique IDs and descriptive names
     - Cross-platform file access (works in CLI and desktop environments)
-    - Retrieve data by file ID or filename for analysis
+    - preview_data shows file structure and provides loading code examples
     
     Args:
         name (str): Tool name to execute. Must be one of:
-                   "search_objects", "get_spectrum_by_id", "retrieve_data", 
+                   "search_objects", "get_spectrum_by_id", "preview_data", 
                    "list_files", "file_statistics"
         
         arguments (dict[str, Any]): Tool-specific parameters:
@@ -1320,12 +1273,14 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
                 format: 'summary' or 'full' (default: 'summary')
                 auto_save: Auto-save full spectra (default: True for 'full')
                 
-            For retrieve_data:
-                identifier: File ID or filename to load
-                return_format: Data format preference
-                
+            For preview_data:
+                identifier: File ID or filename to preview
+                preview_rows: Number of rows to show in preview (default: 10)
+            
             For list_files:
-                file_type, pattern, limit: Filtering options
+                file_type: Filter by file type
+                pattern: Filter by filename pattern
+                limit: Maximum number of results
     
     Returns:
         list[types.TextContent]: Formatted response containing:
@@ -1346,8 +1301,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
             "format": "full"
         })
         
-        # Load saved search results  
-        await call_tool("retrieve_data", {
+        # View saved search results  
+        await call_tool("preview_data", {
             "identifier": "desi_search_cone_ra10.68_dec41.27_GALAXY_25objs_20241231_143022.json"
         })
     
@@ -1517,9 +1472,10 @@ SPECTRUM AUTOMATICALLY SAVED:
 - File ID: {save_result['file_id']}
 - Filename: {save_result['filename']}
 - Size: {save_result['size_bytes']:,} bytes
-- Location: {save_result['filepath']}
+- Location: {save_result['filename']}
 
-Retrieve with: retrieve_data('{save_result['file_id']}') or retrieve_data('{save_result['filename']}')
+View file info: preview_data('{save_result['file_id']}') or preview_data('{save_result['filename']}')
+(preview_data shows structure and provides code examples for manual loading)
 """
                 elif auto_save:
                     response_text += f"\n\nNote: Auto-save was enabled but failed to save spectrum."
@@ -1544,17 +1500,17 @@ Retrieve with: retrieve_data('{save_result['file_id']}') or retrieve_data('{save
                 return [types.TextContent(type="text", text=f"Error: {file_info['error']}")]
             
             metadata = file_info['metadata']
-            filepath = Path(metadata['filepath'])
+            filename = metadata['filename']  # This is now the full path
             
             # Build response with metadata
             response = f"""
 DATA FILE PREVIEW
 ================
-Filename: {metadata['filename']}
+Filename: {Path(filename).name}
+Full Path: {filename}
 File Type: {metadata['file_type']}
 Size: {metadata['size_bytes']:,} bytes ({metadata['size_bytes']/1024/1024:.1f} MB)
 Created: {metadata['created']}
-Location: {filepath}
 
 METADATA:
 """
@@ -1566,7 +1522,7 @@ METADATA:
             # Preview based on file type
             if metadata['file_type'] == 'json':
                 response += "\nJSON STRUCTURE PREVIEW:\n"
-                with open(filepath, 'r') as f:
+                with open(filename, 'r') as f:
                     data = json.load(f)
                     response += get_json_structure(data, max_depth=3)
                     
@@ -1586,10 +1542,10 @@ METADATA:
             elif metadata['file_type'] == 'csv':
                 response += "\nCSV PREVIEW:\n"
                 # Use pandas to read just first rows
-                df_preview = pd.read_csv(filepath, nrows=preview_rows)
-                df_info = pd.read_csv(filepath, nrows=0)  # Just headers for dtype info
+                df_preview = pd.read_csv(filename, nrows=preview_rows)
+                df_info = pd.read_csv(filename, nrows=0)  # Just headers for dtype info
                 
-                response += f"Shape: {sum(1 for _ in open(filepath))-1} rows × {len(df_info.columns)} columns\n\n"
+                response += f"Shape: {sum(1 for _ in open(filename))-1} rows × {len(df_info.columns)} columns\n\n"
                 response += "COLUMNS:\n"
                 for col in df_info.columns:
                     dtype = df_preview[col].dtype
@@ -1600,7 +1556,7 @@ METADATA:
             
             elif metadata['file_type'] == 'fits' and ASTROPY_AVAILABLE:
                 response += "\nFITS FILE STRUCTURE:\n"
-                with fits.open(filepath) as hdul:
+                with fits.open(filename) as hdul:
                     response += f"Number of HDUs: {len(hdul)}\n\n"
                     for i, hdu in enumerate(hdul):
                         response += f"HDU {i}: {hdu.name or 'PRIMARY'}\n"
@@ -1616,7 +1572,7 @@ METADATA:
             
             elif metadata['file_type'] == 'hdf5' and H5PY_AVAILABLE:
                 response += "\nHDF5 FILE STRUCTURE:\n"
-                with h5py.File(filepath, 'r') as f:
+                with h5py.File(filename, 'r') as f:
                     response += "Groups and datasets:\n"
                     def visit_item(name, obj):
                         if isinstance(obj, h5py.Dataset):
@@ -1636,34 +1592,30 @@ LOADING CODE EXAMPLES:
             
             if metadata['file_type'] == 'json':
                 response += f"""import json
-with open('{metadata['filename']}', 'r') as f:
+with open('{filename}', 'r') as f:
     data = json.load(f)
 # Access results: data['results'] if exists"""
             
             elif metadata['file_type'] == 'csv':
                 response += f"""import pandas as pd
-df = pd.read_csv('{metadata['filename']}')
+df = pd.read_csv('{filename}')
 # For large files, use chunking:
-# for chunk in pd.read_csv('{metadata['filename']}', chunksize=10000):
+# for chunk in pd.read_csv('{filename}', chunksize=10000):
 #     process(chunk)"""
             
             elif metadata['file_type'] == 'fits':
                 response += f"""from astropy.io import fits
-hdul = fits.open('{metadata['filename']}')
+hdul = fits.open('{filename}')
 # Access data from first HDU: hdul[0].data
 # Access header: hdul[0].header"""
             
             elif metadata['file_type'] == 'hdf5':
                 response += f"""import h5py
-with h5py.File('{metadata['filename']}', 'r') as f:
+with h5py.File('{filename}', 'r') as f:
     # List all keys: list(f.keys())
     # Access dataset: data = f['dataset_name'][:]"""
             
             return [types.TextContent(type="text", text=response)]
-        
-        elif name == "retrieve_data":
-            # REMOVED: This has been replaced by preview_data
-            pass
         
         elif name == "list_files":
             file_type = arguments.get("file_type")
@@ -1682,7 +1634,10 @@ with h5py.File('{metadata['filename']}', 'r') as f:
                 response = f"Found {len(files)} file(s):\n\n"
                 
                 for i, file_info in enumerate(files, 1):
-                    response += f"{i}. [{file_info['file_type']}] {file_info['filename']}\n"
+                    filename = file_info['filename']  # Full path
+                    basename = Path(filename).name    # Just the filename
+                    response += f"{i}. [{file_info['file_type']}] {basename}\n"
+                    response += f"   Path: {filename}\n"
                     response += f"   ID: {file_info['id']}\n"
                     response += f"   Size: {file_info['size_bytes']:,} bytes\n"
                     response += f"   Created: {file_info['created']}\n"
