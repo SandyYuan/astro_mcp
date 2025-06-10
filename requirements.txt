@@ -1,15 +1,19 @@
-# MCP Server dependencies
-mcp
+# Core MCP dependencies
+mcp>=1.0.0
+pydantic>=2.0.0
 
-# Claude AI integration
-anthropic
+# Astronomical data access
+sparclclient>=1.0.0  # DESI SPARCL access
+datalab>=2.20.0      # NOAO Data Lab access
 
-# Environment variable loading
-python-dotenv
+# Data handling and analysis
+pandas>=2.0.0
+numpy>=1.24.0
 
-# DESI data access via SPARCL (primary)
-sparclclient>=1.0.0
+# Optional astronomical libraries
+astropy>=5.0.0       # FITS files and astronomical calculations
+h5py>=3.8.0          # HDF5 file support
 
-# TAP access for fallback
-requests
-astropy 
+# Development and testing (optional)
+pytest>=7.0.0
+pytest-asyncio>=0.21.0 
