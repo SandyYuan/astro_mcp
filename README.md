@@ -2,6 +2,150 @@
 
 A modular Model Context Protocol (MCP) server that provides unified access to multiple astronomical datasets through a clean, extensible architecture.
 
+## Quick Setup for Cursor & Claude Desktop
+
+### 1. Clone and Setup Environment
+
+```bash
+# Clone the repository
+git clone https://github.com/SandyYuan/astro_mcp.git
+cd astro_mcp
+
+# Create a dedicated conda environment with Python 3.11+
+conda create -n mcp python=3.11
+conda activate mcp
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Optional: Install astronomical libraries for full functionality
+pip install sparclclient datalab astropy
+```
+
+### 2. Test the Server
+
+```bash
+# Test basic functionality
+python test_server.py
+
+# Test with a simple query (optional)
+python -c "
+import asyncio
+from server import astro_server
+async def test():
+    result = astro_server.get_global_statistics()
+    print('✅ Server working:', result['total_files'], 'files in registry')
+asyncio.run(test())
+"
+```
+
+### 3. Configure for Cursor
+
+Add this configuration to your Cursor MCP settings:
+
+```json
+{
+  "mcpServers": {
+    "astro-mcp": {
+      "command": "/path/to/conda/envs/mcp/bin/python",
+      "args": ["/path/to/astro_mcp/server.py"],
+      "cwd": "/path/to/astro_mcp",
+      "env": {}
+    }
+  }
+}
+```
+
+**To find your conda Python path:**
+```bash
+conda activate mcp
+which python
+# Copy this path for the "command" field above
+```
+
+### 4. Configure for Claude Desktop
+
+Edit your Claude Desktop MCP configuration file:
+
+**macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+**Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "astro-mcp": {
+      "command": "/path/to/conda/envs/mcp/bin/python",
+      "args": ["/path/to/astro_mcp/server.py"],
+      "cwd": "/path/to/astro_mcp",
+      "env": {}
+    }
+  }
+}
+```
+
+### 5. Restart and Test
+
+1. **Restart Cursor/Claude Desktop** to load the new MCP server
+2. **Test with a query** like:
+   - "Search for galaxies near RA=10.68, Dec=41.27"
+   - "List available astronomical data tools"
+   - "Show me file statistics for saved data"
+
+### 6. Troubleshooting
+
+**Server won't start:**
+```bash
+# Check Python environment
+conda activate mcp
+python --version  # Should be 3.11+
+
+# Test server manually
+python server.py
+# Should start without errors
+```
+
+**MCP connection issues:**
+- Verify the Python path in your config points to the conda environment
+- Ensure the working directory (`cwd`) points to the astro_mcp folder
+- Check that all dependencies are installed in the correct environment
+
+**Missing astronomical data:**
+```bash
+# Install optional dependencies for full functionality
+conda activate mcp
+pip install sparclclient datalab astropy h5py
+```
+
+## Usage Examples with Cursor/Claude Desktop
+
+Once configured, you can ask natural language questions about astronomical data:
+
+### Basic Searches
+- *"Find galaxies near RA=150.5, Dec=2.2 within 0.1 degrees"*
+- *"Search for quasars with redshift between 2 and 3"*
+- *"What objects are in the region from RA 10 to 11 degrees and Dec 40 to 42 degrees?"*
+
+### Spectral Data Analysis
+- *"Get the spectrum for DESI object with ID 1270d3c4-9d36-11ee-94ad-525400ad1336"*
+- *"Show me detailed spectral information for the brightest quasar you can find"*
+- *"Find a galaxy spectrum and analyze its redshift"*
+
+### File Management
+- *"List all saved astronomical data files"*
+- *"Show me storage statistics for my downloaded data"*
+- *"Preview the structure of the latest galaxy search results"*
+
+### Advanced Queries
+- *"Find high-redshift galaxies (z > 1.5) and save their spectra"*
+- *"Search for objects in the COSMOS field and analyze their types"*
+- *"Compare object densities in different sky regions"*
+
+The server will automatically:
+- Execute appropriate DESI database queries
+- Save results with descriptive filenames
+- Provide structured data analysis
+- Handle coordinate conversions and astronomical calculations
+
 ## Architecture
 
 ```
@@ -51,16 +195,45 @@ mcp/
 
 ## Installation
 
+> **Quick Start:** For Cursor & Claude Desktop integration, see the [Quick Setup](#quick-setup-for-cursor--claude-desktop) section above.
+
+### Manual Installation
+
 ```bash
 # Clone the repository
-git clone <repository-url>
-cd mcp
+git clone https://github.com/SandyYuan/astro_mcp.git
+cd astro_mcp
+
+# Create and activate environment
+conda create -n mcp python=3.11
+conda activate mcp
 
 # Install dependencies
 pip install -r requirements.txt
 
 # Optional: Install development dependencies
-pip install -r requirements.txt[dev]
+pip install pytest coverage
+```
+
+### Verify Installation
+
+```bash
+# Test the server components
+python test_server.py
+
+# Check available tools
+python -c "
+import asyncio
+from server import server
+
+async def show_tools():
+    tools = await server.list_tools()
+    print('Available tools:')
+    for tool in tools:
+        print(f'  - {tool.name}: {tool.description}')
+
+asyncio.run(show_tools())
+"
 ```
 
 ## Quick Start
