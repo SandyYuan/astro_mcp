@@ -30,6 +30,7 @@ from pydantic import AnyUrl
 # Import modular components
 from data_sources import DESIDataSource
 from data_io.preview import DataPreviewManager
+from data_io.fits_converter import FITSConverter
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -81,6 +82,9 @@ class AstroMCPServer:
         
         # Initialize preview manager with unified registry
         self.preview_manager = DataPreviewManager(self.registry)
+        
+        # Initialize FITS converter with unified registry
+        self.fits_converter = FITSConverter(self.registry)
         
         logger.info("Astro MCP Server initialized with modular architecture")
         logger.info(f"Data directory: {self.desi.base_dir}")
@@ -213,6 +217,7 @@ Available Tools:
 3. preview_data - File structure analysis with loading examples
 4. list_files - Comprehensive file management
 5. file_statistics - Storage usage and organization info
+6. convert_to_fits - Convert data files to FITS format using astropy
 
 Architecture Features:
 =====================
@@ -433,6 +438,35 @@ async def handle_list_tools() -> list[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {}
+            }
+        ),
+        types.Tool(
+            name="convert_to_fits",
+            description="Convert saved astronomical data files to FITS format using astropy. Supports catalogs (as FITS tables), spectra (with WCS), images, and generic data. Automatically detects data type and applies appropriate FITS structure with metadata preservation.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "identifier": {
+                        "type": "string",
+                        "description": "File ID or filename to convert to FITS format"
+                    },
+                    "output_file": {
+                        "type": "string",
+                        "description": "Custom output filename (auto-generated if not specified, .fits extension added automatically)"
+                    },
+                    "data_type": {
+                        "type": "string",
+                        "description": "Type of astronomical data for optimal FITS conversion",
+                        "enum": ["auto", "catalog", "spectrum", "image", "generic"],
+                        "default": "auto"
+                    },
+                    "preserve_metadata": {
+                        "type": "boolean",
+                        "description": "Include original file metadata in FITS headers",
+                        "default": True
+                    }
+                },
+                "required": ["identifier"]
             }
         )
     ]
@@ -673,6 +707,72 @@ View file info: preview_data('{save_result['file_id']}')
                 response += f"  - [{f['source']}] {Path(f['filename']).name} ({f['created']})\n"
             
             return [types.TextContent(type="text", text=response)]
+        
+        elif name == "convert_to_fits":
+            identifier = arguments["identifier"]
+            output_file = arguments.get("output_file")
+            data_type = arguments.get("data_type", "auto")
+            preserve_metadata = arguments.get("preserve_metadata", True)
+            
+            result = astro_server.fits_converter.convert_to_fits(
+                identifier=identifier,
+                output_file=output_file,
+                data_type=data_type,
+                preserve_metadata=preserve_metadata
+            )
+            
+            if result['status'] == 'error':
+                return [types.TextContent(type="text", text=f"Error: {result['error']}")]
+            
+            # Format response based on data type
+            response_text = f"FITS Conversion Successful!\n"
+            response_text += f"=============================\n\n"
+            response_text += f"Source: {identifier}\n"
+            response_text += f"Output: {result['output_file']}\n"
+            response_text += f"Data Type: {result['data_type']}\n"
+            response_text += f"File Size: {result['size_bytes']:,} bytes\n\n"
+            
+            # Add data-specific information
+            if result['data_type'] == 'catalog':
+                response_text += f"Catalog Details:\n"
+                response_text += f"- Objects: {result['n_objects']:,}\n"
+                response_text += f"- Columns: {len(result['columns'])}\n"
+                response_text += f"- Column names: {', '.join(result['columns'][:10])}"
+                if len(result['columns']) > 10:
+                    response_text += f" ... and {len(result['columns']) - 10} more"
+                response_text += "\n"
+                response_text += f"- FITS structure: PRIMARY HDU + CATALOG (Binary Table)\n"
+                
+            elif result['data_type'] == 'spectrum':
+                response_text += f"Spectrum Details:\n"
+                response_text += f"- Pixels: {result['n_pixels']:,}\n"
+                if result['wavelength_range']:
+                    response_text += f"- Wavelength range: {result['wavelength_range'][0]:.1f} - {result['wavelength_range'][1]:.1f} Å\n"
+                response_text += f"- Extensions: {', '.join(result['extensions'])}\n"
+                response_text += f"- Flux units: 10^-17 erg/s/cm²/Å\n"
+                
+            elif result['data_type'] == 'image':
+                response_text += f"Image Details:\n"
+                response_text += f"- Dimensions: {result['dimensions']}\n"
+                response_text += f"- FITS structure: Single image HDU\n"
+                
+            else:
+                response_text += f"Generic data converted to FITS format\n"
+            
+            response_text += f"\nThe FITS file is ready for use with astronomical software like:\n"
+            response_text += f"- Python: astropy.io.fits, astropy.table.Table\n"
+            response_text += f"- IDL: readfits(), mrdfits()\n"
+            response_text += f"- IRAF: tables, images packages\n"
+            response_text += f"- TopCat: Load as FITS table/image\n"
+            
+            # Add file management info
+            if 'file_id' in result:
+                response_text += f"\nFILE MANAGEMENT:\n"
+                response_text += f"- File ID: {result['file_id']}\n"
+                response_text += f"- Preview: preview_data('{result['file_id']}')\n"
+                response_text += f"- List all files: list_files(file_type='fits')\n"
+            
+            return [types.TextContent(type="text", text=response_text)]
         
         else:
             return [types.TextContent(

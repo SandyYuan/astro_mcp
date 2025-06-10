@@ -1,4 +1,4 @@
-# Astro MCP - Modular Astronomical Data Access
+# Astro MCP - Agentic Astronomical Data Access
 
 A modular Model Context Protocol (MCP) server that provides unified access to multiple astronomical datasets through a clean, extensible architecture.
 
