@@ -1,9 +1,9 @@
 {
   "mcpServers": {
     "astro-mcp": {
-      "command": "python",
-      "args": ["/Users/sandyyuan/projects/mcp/server.py"],
-      "cwd": ".",
+      "command": "/path/to/conda/envs/mcp/bin/python",
+      "args": ["/path/to/astro_mcp/server.py"],
+      "cwd": "/path/to/astro_mcp",
       "env": {}
     }
   }
