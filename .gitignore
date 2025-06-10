@@ -22,6 +22,8 @@ wheels/
 MANIFEST
 .env
 
+*_example_usage
+
 # Virtual environments
 .env
 .venv
