@@ -36,6 +36,19 @@ from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 from pydantic import AnyUrl
 
+# Additional imports for preview_data
+try:
+    from astropy.io import fits
+    ASTROPY_AVAILABLE = True
+except ImportError:
+    ASTROPY_AVAILABLE = False
+
+try:
+    import h5py
+    H5PY_AVAILABLE = True
+except ImportError:
+    H5PY_AVAILABLE = False
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -249,8 +262,9 @@ class DESIMCPServer:
             - Files saved to base_dir (~/desi_mcp_data/ by default)
             - Registry automatically updated for list_files and file_statistics
             - File IDs can be used with retrieve_data for loading
-            - All saved files include creation timestamps and descriptions
-            - Cross-platform filename sanitization ensures compatibility
+            - All files include complete metadata for scientific reproducibility
+            - Cross-platform file access (works in CLI and desktop environments)
+            - Retrieve data by file ID or filename for analysis
         """
         # Sanitize filename
         safe_filename = "".join(c for c in filename if c.isalnum() or c in '._-')
@@ -541,8 +555,77 @@ class DESIMCPServer:
         
         return stats
 
+    def get_file_info(self, identifier: str) -> Dict[str, Any]:
+        """
+        Get file metadata without loading content.
+        Used by preview_data to understand file structure without loading large files.
+        """
+        # Find file record
+        file_record = None
+        
+        # Check if identifier is a file ID
+        if identifier in self.registry['files']:
+            file_record = self.registry['files'][identifier]
+        else:
+            # Search by filename
+            for fid, record in self.registry['files'].items():
+                if record['filename'] == identifier:
+                    file_record = record
+                    break
+        
+        if not file_record:
+            return {
+                'status': 'error',
+                'error': f"File not found: {identifier}"
+            }
+        
+        filepath = Path(file_record['filepath'])
+        if not filepath.exists():
+            return {
+                'status': 'error',
+                'error': f"File no longer exists: {filepath}"
+            }
+        
+        return {
+            'status': 'success',
+            'metadata': file_record
+        }
+
 # Initialize unified server
 desi_server = DESIMCPServer()
+
+def get_json_structure(data, max_depth=3, current_depth=0):
+    """Get structure of JSON data without values."""
+    if current_depth >= max_depth:
+        return "..."
+    
+    if isinstance(data, dict):
+        structure = "{\n"
+        for key in list(data.keys())[:10]:  # Show first 10 keys
+            indent = "  " * (current_depth + 1)
+            value_type = type(data[key]).__name__
+            if isinstance(data[key], (dict, list)):
+                sub_structure = get_json_structure(data[key], max_depth, current_depth + 1)
+                structure += f"{indent}{key}: {sub_structure}\n"
+            else:
+                structure += f"{indent}{key}: <{value_type}>\n"
+        if len(data) > 10:
+            structure += f"{indent}... ({len(data) - 10} more keys)\n"
+        structure += "  " * current_depth + "}"
+        return structure
+    
+    elif isinstance(data, list):
+        if len(data) == 0:
+            return "[]"
+        first_item_type = type(data[0]).__name__
+        if isinstance(data[0], (dict, list)):
+            sub_structure = get_json_structure(data[0], max_depth, current_depth + 1)
+            return f"[{len(data)} items of {sub_structure}]"
+        else:
+            return f"[{len(data)} items of <{first_item_type}>]"
+    
+    else:
+        return f"<{type(data).__name__}>"
 
 @server.list_resources()
 async def handle_list_resources() -> list[types.Resource]:
@@ -814,20 +897,19 @@ async def handle_list_tools() -> list[types.Tool]:
             }
         ),
         types.Tool(
-            name="retrieve_data",
-            description="Retrieve data by file ID or filename using the structured file manager. Provides consistent access to saved search results and spectrum data.",
+            name="preview_data",
+            description="Load previously saved search results or spectrum data by file ID or filename",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "identifier": {
                         "type": "string",
-                        "description": "File ID or filename to retrieve"
+                        "description": "File ID or filename to preview"
                     },
-                    "return_format": {
-                        "type": "string",
-                        "description": "How to return data: auto, raw, dataframe, array",
-                        "enum": ["auto", "raw", "dataframe", "array"],
-                        "default": "auto"
+                    "preview_rows": {
+                        "type": "integer",
+                        "description": "Number of rows/items to preview (default: 10)",
+                        "default": 10
                     }
                 },
                 "required": ["identifier"]
@@ -1173,7 +1255,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
        - AUTOMATIC SAVING: Full spectra automatically saved to JSON files
        - Includes wavelength, flux, model, and inverse variance arrays
     
-    3. "retrieve_data"
+    3. "preview_data"
        - Load previously saved search results or spectrum data by file ID or filename
        - Supports multiple return formats (auto, raw, dataframe, array)
        - Provides access to file metadata and creation details
@@ -1451,33 +1533,137 @@ Retrieve with: retrieve_data('{save_result['file_id']}') or retrieve_data('{save
                 )]
         
         # Handle structured I/O tools
-        elif name == "retrieve_data":
+        elif name == "preview_data":
             identifier = arguments["identifier"]
-            return_format = arguments.get("return_format", "auto")
+            preview_rows = arguments.get("preview_rows", 10)
             
-            result = desi_server.load_file(identifier, return_type=return_format)
+            # Get file metadata without loading content
+            file_info = desi_server.get_file_info(identifier)
             
-            if result['status'] == 'success':
-                metadata = result['metadata']
-                response = f"""
-File loaded: {metadata['filename']}
-- Type: {metadata['file_type']}
-- Size: {metadata['size_bytes']:,} bytes
-- Created: {metadata['created']}
+            if file_info['status'] == 'error':
+                return [types.TextContent(type="text", text=f"Error: {file_info['error']}")]
+            
+            metadata = file_info['metadata']
+            filepath = Path(metadata['filepath'])
+            
+            # Build response with metadata
+            response = f"""
+DATA FILE PREVIEW
+================
+Filename: {metadata['filename']}
+File Type: {metadata['file_type']}
+Size: {metadata['size_bytes']:,} bytes ({metadata['size_bytes']/1024/1024:.1f} MB)
+Created: {metadata['created']}
+Location: {filepath}
+
+METADATA:
 """
-                
-                # For small files, include the data
-                if result['size_bytes'] < 100000:  # 100KB limit
-                    response += f"\n\nData:\n{json.dumps(result['data'], indent=2)[:1000]}"
-                    if len(json.dumps(result['data'])) > 1000:
-                        response += "\n... (truncated)"
-                else:
-                    response += "\n\nFile too large to display inline. Data loaded for processing."
             
-            else:
-                response = f"Error loading file: {result['error']}"
+            # Add any stored metadata
+            for key, value in metadata.get('metadata', {}).items():
+                response += f"  {key}: {value}\n"
+            
+            # Preview based on file type
+            if metadata['file_type'] == 'json':
+                response += "\nJSON STRUCTURE PREVIEW:\n"
+                with open(filepath, 'r') as f:
+                    data = json.load(f)
+                    response += get_json_structure(data, max_depth=3)
+                    
+                    # If it's array data, show first few items
+                    if isinstance(data, list) and len(data) > 0:
+                        response += f"\nFirst {min(preview_rows, len(data))} items:\n"
+                        for i, item in enumerate(data[:preview_rows]):
+                            response += f"  [{i}]: {json.dumps(item, indent=2)[:200]}...\n"
+                    
+                    # If it has 'results' key (common pattern)
+                    elif isinstance(data, dict) and 'results' in data:
+                        results = data['results']
+                        response += f"\nTotal results: {len(results)}\n"
+                        if len(results) > 0:
+                            response += f"First result structure:\n{json.dumps(results[0], indent=2)[:500]}...\n"
+            
+            elif metadata['file_type'] == 'csv':
+                response += "\nCSV PREVIEW:\n"
+                # Use pandas to read just first rows
+                df_preview = pd.read_csv(filepath, nrows=preview_rows)
+                df_info = pd.read_csv(filepath, nrows=0)  # Just headers for dtype info
+                
+                response += f"Shape: {sum(1 for _ in open(filepath))-1} rows × {len(df_info.columns)} columns\n\n"
+                response += "COLUMNS:\n"
+                for col in df_info.columns:
+                    dtype = df_preview[col].dtype
+                    response += f"  - {col}: {dtype}\n"
+                
+                response += f"\nFIRST {preview_rows} ROWS:\n"
+                response += df_preview.to_string(max_cols=10)
+            
+            elif metadata['file_type'] == 'fits' and ASTROPY_AVAILABLE:
+                response += "\nFITS FILE STRUCTURE:\n"
+                with fits.open(filepath) as hdul:
+                    response += f"Number of HDUs: {len(hdul)}\n\n"
+                    for i, hdu in enumerate(hdul):
+                        response += f"HDU {i}: {hdu.name or 'PRIMARY'}\n"
+                        response += f"  Type: {type(hdu).__name__}\n"
+                        if hasattr(hdu, 'data') and hdu.data is not None:
+                            response += f"  Shape: {hdu.data.shape}\n"
+                            response += f"  Data type: {hdu.data.dtype}\n"
+                        if hdu.header:
+                            response += "  Key headers:\n"
+                            for key in ['NAXIS', 'NAXIS1', 'NAXIS2', 'OBJECT', 'DATE-OBS']:
+                                if key in hdu.header:
+                                    response += f"    {key}: {hdu.header[key]}\n"
+            
+            elif metadata['file_type'] == 'hdf5' and H5PY_AVAILABLE:
+                response += "\nHDF5 FILE STRUCTURE:\n"
+                with h5py.File(filepath, 'r') as f:
+                    response += "Groups and datasets:\n"
+                    def visit_item(name, obj):
+                        if isinstance(obj, h5py.Dataset):
+                            response += f"  {name}: {obj.shape} {obj.dtype}\n"
+                        else:
+                            response += f"  {name}/ (group)\n"
+                    f.visititems(visit_item)
+            
+            # Add code generation hints
+            response += f"""
+
+LOADING CODE EXAMPLES:
+====================
+# Python code to load this file:
+
+"""
+            
+            if metadata['file_type'] == 'json':
+                response += f"""import json
+with open('{metadata['filename']}', 'r') as f:
+    data = json.load(f)
+# Access results: data['results'] if exists"""
+            
+            elif metadata['file_type'] == 'csv':
+                response += f"""import pandas as pd
+df = pd.read_csv('{metadata['filename']}')
+# For large files, use chunking:
+# for chunk in pd.read_csv('{metadata['filename']}', chunksize=10000):
+#     process(chunk)"""
+            
+            elif metadata['file_type'] == 'fits':
+                response += f"""from astropy.io import fits
+hdul = fits.open('{metadata['filename']}')
+# Access data from first HDU: hdul[0].data
+# Access header: hdul[0].header"""
+            
+            elif metadata['file_type'] == 'hdf5':
+                response += f"""import h5py
+with h5py.File('{metadata['filename']}', 'r') as f:
+    # List all keys: list(f.keys())
+    # Access dataset: data = f['dataset_name'][:]"""
             
             return [types.TextContent(type="text", text=response)]
+        
+        elif name == "retrieve_data":
+            # REMOVED: This has been replaced by preview_data
+            pass
         
         elif name == "list_files":
             file_type = arguments.get("file_type")
