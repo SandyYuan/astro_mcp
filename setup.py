@@ -1,28 +1,26 @@
 #!/usr/bin/env python3
 
 """
-Setup script for DESI MCP Server
-Installs dependencies and validates the installation
+Setup script for Astro MCP Server
+
+Installs the required dependencies for the modular astronomical
+data access MCP server.
 """
 
+import os
 import subprocess
 import sys
-import os
 
 def run_command(command, description):
-    """Run a command and handle errors."""
-    print(f"\n{description}...")
+    """Run a shell command and print status."""
+    print(f"📦 {description}...")
     try:
-        result = subprocess.run(command, shell=True, capture_output=True, text=True)
-        if result.returncode == 0:
-            print(f"✓ {description} completed successfully")
-            return True
-        else:
-            print(f"✗ {description} failed:")
-            print(result.stderr)
-            return False
-    except Exception as e:
-        print(f"✗ {description} failed with exception: {e}")
+        result = subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
+        print(f"✅ {description} completed successfully")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"❌ {description} failed:")
+        print(f"Error: {e.stderr}")
         return False
 
 def check_python_version():
@@ -46,8 +44,8 @@ def test_installation():
     return run_command("python test_server.py", "Testing server functionality")
 
 def main():
-    """Main setup function."""
-    print("DESI MCP Server Setup")
+    """Run the complete setup process."""
+    print("Astro MCP Server Setup")
     print("=" * 40)
     
     # Check Python version
@@ -63,13 +61,11 @@ def main():
     if not test_installation():
         print("\nTesting failed. The server may still work, but please check the errors.")
     
-    print("\n" + "=" * 40)
-    print("Setup completed!")
+    print(f"\n🎉 Astro MCP Server setup completed successfully!")
     print("\nNext steps:")
-    print("1. Run the server: python server.py")
-    print("2. Configure your MCP client with the provided mcp_config.json")
-    print("3. For full functionality, ensure SPARCL access is available")
-    print("\nFor more information, see README.md")
+    print("1. Start the server: python server.py")
+    print("2. Test it: python test_server.py")
+    print("3. Use with Claude: python claude_mcp_client.py")
 
 if __name__ == "__main__":
     main() 
