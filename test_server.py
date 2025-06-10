@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 
 """
-Basic tests for the DESI MCP Server
-Tests server initialization and basic functionality without SPARCL dependency
+Basic tests for the Astro MCP Server
+
+This script tests the core functionality of the Astro MCP server,
+including tool listing, resource handling, and basic tool execution.
 """
 
 import asyncio
 import json
+import mcp.types as types
+from mcp import StdioServerParameters
+from mcp.client.stdio import stdio_client
+from mcp.client import ClientSession
 
 async def test_server_imports():
     """Test that the server can be imported without errors."""
@@ -120,7 +126,7 @@ async def test_sparcl_dependency():
 
 async def main():
     """Run all tests."""
-    print("DESI MCP Server Basic Tests")
+    print("Astro MCP Server Basic Tests")
     print("=" * 50)
     
     tests = [
@@ -144,7 +150,7 @@ async def main():
     print(f"Test Results: {passed}/{total} tests passed")
     
     if passed == total:
-        print("🎉 All tests passed! The DESI MCP server is working correctly.")
+        print("🎉 All tests passed! The Astro MCP server is working correctly.")
         if not SPARCL_AVAILABLE:
             print("\nNote: SPARCL is not available, so actual data queries won't work.")
             print("To enable full functionality, install SPARCL with: pip install sparclclient")

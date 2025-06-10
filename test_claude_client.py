@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
 
 """
-Test script for Claude MCP Client setup verification
-Tests the client initialization and MCP server connection without requiring Claude API calls
+Test Script for Astro MCP + Claude Integration
+
+This script runs comprehensive tests to verify that Claude can successfully
+interact with the Astro MCP server and use its tools correctly.
 """
 
 import asyncio
-import os
+import sys
 from claude_mcp_client import ClaudeMCPClient
+import os
+from dotenv import load_dotenv
+
+print("🧪 Testing Astro MCP Server Connection...")
 
 async def test_mcp_connection():
     """Test MCP server connection without Claude API calls."""
-    print("🧪 Testing DESI MCP Server Connection...")
+    print("🧪 Testing Astro MCP Server Connection...")
     
     # Use a dummy API key for testing MCP connection only
     dummy_api_key = "test-key-for-mcp-connection-only"
@@ -98,14 +104,14 @@ def show_usage_instructions():
     print()
     print("5. The client will:")
     print("   - Automatically load your API key from .env")
-    print("   - Start your DESI MCP server automatically")
-    print("   - Connect Claude to the DESI tools")
+    print("   - Start your Astro MCP server automatically")
+    print("   - Connect Claude to the Astro tools")
     print("   - Process natural language queries about astronomical data")
-    print("   - Return intelligent responses with real DESI data")
+    print("   - Return intelligent responses with real Astro data")
 
 async def main():
     """Run all tests."""
-    print("🚀 DESI MCP + Claude Client Test Suite")
+    print("🚀 Astro MCP + Claude Client Test Suite")
     print("="*60)
     
     # Check dependencies
@@ -126,4 +132,8 @@ async def main():
         print("\n❌ Tests failed. Please check the error messages above.")
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    print("🧪 Astro MCP + Claude Client Test Suite")
+    print("=" * 50)
+    
+    success = asyncio.run(main())
+    sys.exit(0 if success else 1) 

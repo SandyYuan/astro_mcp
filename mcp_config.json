@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "desi-basic": {
+    "astro-mcp": {
       "command": "python",
       "args": ["/Users/sandyyuan/projects/mcp/server.py"],
       "cwd": ".",

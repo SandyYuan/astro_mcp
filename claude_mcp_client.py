@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 
 """
-Claude MCP Client for DESI Data Access
+Claude MCP Client for Astro Data Access
 
-This script demonstrates how to use Claude with the DESI MCP server to answer
-natural language queries about astronomical data.
+This script demonstrates how to use Claude with the Astro MCP server to answer
+astronomical data questions using DESI survey data.
 
 Example usage:
     python claude_mcp_client.py
@@ -38,18 +38,18 @@ class ClaudeMCPClient:
         )
         self.tools_for_claude = []
         self.session = None
-        self.system_prompt = """You are an expert astronomical data analyst with access to DESI (Dark Energy Spectroscopic Instrument) survey data through specialized tools. 
+        self.system_prompt = """You are an expert astronomical data analyst with access to the Astro MCP server, which provides modular access to multiple astronomical datasets.
 
-Your role is to help users query and analyze DESI spectroscopic data by:
+Your role is to help users query and analyze astronomical data by:
 1. Understanding natural language queries about astronomical objects
-2. Using the appropriate DESI tools to search for and retrieve data
+2. Using the appropriate tools to search for and retrieve data from different surveys
 3. Interpreting the results and providing clear, informative responses
 
-Available DESI tools:
-- find_spectra_by_coordinates: Search for spectra near specific sky coordinates
-- get_spectrum_by_id: Retrieve detailed information about a specific spectrum
-- search_by_object_type: Find objects by type (GALAXY, QSO, STAR) with optional filters
-- search_in_region: Search for objects in rectangular sky regions
+Available data sources and tools:
+- DESI: Dark Energy Spectroscopic Instrument (fully implemented)
+  - search_objects: Search for astronomical objects by coordinates, type, redshift
+  - get_spectrum_by_id: Retrieve detailed spectral data by ID
+- Future surveys: ACT (Atacama Cosmology Telescope) and others
 
 When users ask about astronomical objects, coordinates, spectra, or redshifts, use these tools to provide accurate, data-driven answers. Always explain what you're doing and interpret the results in an accessible way."""
         
@@ -86,7 +86,7 @@ When users ask about astronomical objects, coordinates, spectra, or redshifts, u
             }
             self.tools_for_claude.append(claude_tool)
         
-        print(f"✅ Connected to DESI MCP Server with {len(self.tools_for_claude)} tools")
+        print(f"✅ Connected to Astro MCP Server with {len(self.tools_for_claude)} tools")
         for tool in self.tools_for_claude:
             print(f"   - {tool['name']}")
     
@@ -221,9 +221,9 @@ When users ask about astronomical objects, coordinates, spectra, or redshifts, u
 async def interactive_mode(client: ClaudeMCPClient):
     """Run the client in interactive mode."""
     print("\n" + "="*60)
-    print("🌟 DESI MCP + Claude Interactive Client")
+    print("🌟 Astro MCP + Claude Interactive Client")
     print("="*60)
-    print("Ask questions about DESI astronomical data in natural language!")
+    print("Ask questions about Astro astronomical data in natural language!")
     print("Examples:")
     print("  • 'find the nearest galaxy to ra=9.9443, dec=41.7221'")
     print("  • 'search for quasars with redshift between 2 and 3'")
@@ -290,7 +290,7 @@ async def main():
         print("   You can get an API key from: https://console.anthropic.com/")
         return
     
-    print("🚀 Starting DESI MCP + Claude Client...")
+    print("🚀 Starting Astro MCP + Claude Client...")
     
     try:
         async with ClaudeMCPClient(api_key) as client:
