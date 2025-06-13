@@ -19,6 +19,7 @@ Usage:
 import asyncio
 import logging
 from typing import Any, Dict, List, Optional
+import json
 
 import mcp.server.stdio
 import mcp.types as types
@@ -28,7 +29,7 @@ from mcp.server.models import InitializationOptions
 from pydantic import AnyUrl
 
 # Import modular components
-from data_sources import DESIDataSource
+from data_sources import DESIDataSource, AstroqueryUniversal
 from data_io.preview import DataPreviewManager
 from data_io.fits_converter import FITSConverter
 
@@ -76,9 +77,11 @@ class AstroMCPServer:
         
         # Initialize data sources
         self.desi = DESIDataSource(base_dir=base_dir)
+        self.astroquery = AstroqueryUniversal(base_dir=base_dir)
         
         # Create unified registry (all sources use same base registry)
         self.registry = self.desi.registry
+        self.astroquery.registry = self.registry
         
         # Initialize preview manager with unified registry
         self.preview_manager = DataPreviewManager(self.registry)
@@ -89,6 +92,10 @@ class AstroMCPServer:
         logger.info("Astro MCP Server initialized with modular architecture")
         logger.info(f"Data directory: {self.desi.base_dir}")
         logger.info(f"DESI data access: {'Available' if self.desi.is_available else 'Unavailable'}")
+    
+    def list_astroquery_services(self) -> List[Dict[str, Any]]:
+        """List all available astroquery services."""
+        return self.astroquery.list_services()
     
     def get_all_files(
         self,
@@ -243,23 +250,18 @@ Notes:
     elif path == "info/data_sources":
         desi_status = "✅ Available" if astro_server.desi.is_available else "❌ Unavailable"
         desi_datalab = "✅ Available" if astro_server.desi.datalab_available else "❌ Unavailable"
+        astroquery_status = f"✅ Available ({len(astro_server.astroquery._services)} services discovered)"
         
         return f"""
 Astronomical Data Sources Status
 ===============================
 
-DESI (Dark Energy Spectroscopic Instrument):
-- SPARCL Client: {desi_status}
-- Data Lab SQL: {desi_datalab}
-- Spectral data retrieval: {'Yes' if astro_server.desi.is_available else 'No'}
-- Catalog searches: {'Yes' if astro_server.desi.datalab_available else 'No'}
+DESI (Dark Energy Spectroscopic Instrument)
+- Main Status: {desi_status}
+- Data Lab SQL Access: {desi_datalab}
 
-Planned Data Sources:
-- ACT (Atacama Cosmology Telescope): Coming Soon
-- Additional spectroscopic surveys: Future releases
-
-Server Architecture: Modular and Extensible
-File Storage: {astro_server.desi.base_dir}
+Astroquery Services
+- Status: {astroquery_status}
 """
     
     else:
@@ -442,32 +444,22 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="convert_to_fits",
-            description="Convert saved astronomical data files to FITS format using astropy. Supports catalogs (as FITS tables), spectra (with WCS), images, and generic data. Automatically detects data type and applies appropriate FITS structure with metadata preservation.",
+            description="Convert saved data files to FITS format using astropy",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "identifier": {
-                        "type": "string",
-                        "description": "File ID or filename to convert to FITS format"
-                    },
-                    "output_file": {
-                        "type": "string",
-                        "description": "Custom output filename (auto-generated if not specified, .fits extension added automatically)"
-                    },
-                    "data_type": {
-                        "type": "string",
-                        "description": "Type of astronomical data for optimal FITS conversion",
-                        "enum": ["auto", "catalog", "spectrum", "image", "generic"],
-                        "default": "auto"
-                    },
-                    "preserve_metadata": {
-                        "type": "boolean",
-                        "description": "Include original file metadata in FITS headers",
-                        "default": True
-                    }
+                    "identifier": {"type": "string", "description": "File ID or filename to convert"},
+                    "data_type": {"type": "string", "enum": ["auto", "catalog", "spectrum", "image", "generic"], "description": "Type of astronomical data for optimal conversion"},
+                    "output_file": {"type": "string", "description": "Custom output filename (optional)"},
+                    "preserve_metadata": {"type": "boolean", "description": "Include original file metadata in FITS headers", "default": True}
                 },
                 "required": ["identifier"]
             }
+        ),
+        types.Tool(
+            name="list_astroquery_services",
+            description="List all available astroquery services discovered by the server",
+            inputSchema={"type": "object", "properties": {}}
         )
     ]
 
@@ -686,99 +678,21 @@ View file info: preview_data('{save_result['file_id']}')
         
         elif name == "file_statistics":
             stats = astro_server.get_global_statistics()
-            
-            response = "Astro MCP File System Statistics\n"
-            response += "=" * 40 + "\n\n"
-            
-            response += f"Total files: {stats['total_files']}\n"
-            response += f"Total size: {stats['total_size_bytes'] / 1024 / 1024:.1f} MB\n\n"
-            
-            response += "By Data Source:\n"
-            for source, count in stats['by_source'].items():
-                response += f"  - {source}: {count} files\n"
-            
-            response += "\nBy File Type:\n"
-            for ftype, count in stats['by_type'].items():
-                response += f"  - {ftype}: {count} files\n"
-            
-            response += "\nRecent Files (All Sources):\n"
-            for f in stats['recent_files']:
-                from pathlib import Path
-                response += f"  - [{f['source']}] {Path(f['filename']).name} ({f['created']})\n"
-            
-            return [types.TextContent(type="text", text=response)]
+            # Pretty print the stats dictionary
+            output = json.dumps(stats, indent=2)
+            return [types.TextContent(text=output)]
         
         elif name == "convert_to_fits":
-            identifier = arguments["identifier"]
-            output_file = arguments.get("output_file")
-            data_type = arguments.get("data_type", "auto")
-            preserve_metadata = arguments.get("preserve_metadata", True)
-            
-            result = astro_server.fits_converter.convert_to_fits(
-                identifier=identifier,
-                output_file=output_file,
-                data_type=data_type,
-                preserve_metadata=preserve_metadata
-            )
-            
-            if result['status'] == 'error':
-                return [types.TextContent(type="text", text=f"Error: {result['error']}")]
-            
-            # Format response based on data type
-            response_text = f"FITS Conversion Successful!\n"
-            response_text += f"=============================\n\n"
-            response_text += f"Source: {identifier}\n"
-            response_text += f"Output: {result['output_file']}\n"
-            response_text += f"Data Type: {result['data_type']}\n"
-            response_text += f"File Size: {result['size_bytes']:,} bytes\n\n"
-            
-            # Add data-specific information
-            if result['data_type'] == 'catalog':
-                response_text += f"Catalog Details:\n"
-                response_text += f"- Objects: {result['n_objects']:,}\n"
-                response_text += f"- Columns: {len(result['columns'])}\n"
-                response_text += f"- Column names: {', '.join(result['columns'][:10])}"
-                if len(result['columns']) > 10:
-                    response_text += f" ... and {len(result['columns']) - 10} more"
-                response_text += "\n"
-                response_text += f"- FITS structure: PRIMARY HDU + CATALOG (Binary Table)\n"
-                
-            elif result['data_type'] == 'spectrum':
-                response_text += f"Spectrum Details:\n"
-                response_text += f"- Pixels: {result['n_pixels']:,}\n"
-                if result['wavelength_range']:
-                    response_text += f"- Wavelength range: {result['wavelength_range'][0]:.1f} - {result['wavelength_range'][1]:.1f} Å\n"
-                response_text += f"- Extensions: {', '.join(result['extensions'])}\n"
-                response_text += f"- Flux units: 10^-17 erg/s/cm²/Å\n"
-                
-            elif result['data_type'] == 'image':
-                response_text += f"Image Details:\n"
-                response_text += f"- Dimensions: {result['dimensions']}\n"
-                response_text += f"- FITS structure: Single image HDU\n"
-                
-            else:
-                response_text += f"Generic data converted to FITS format\n"
-            
-            response_text += f"\nThe FITS file is ready for use with astronomical software like:\n"
-            response_text += f"- Python: astropy.io.fits, astropy.table.Table\n"
-            response_text += f"- IDL: readfits(), mrdfits()\n"
-            response_text += f"- IRAF: tables, images packages\n"
-            response_text += f"- TopCat: Load as FITS table/image\n"
-            
-            # Add file management info
-            if 'file_id' in result:
-                response_text += f"\nFILE MANAGEMENT:\n"
-                response_text += f"- File ID: {result['file_id']}\n"
-                response_text += f"- Preview: preview_data('{result['file_id']}')\n"
-                response_text += f"- List all files: list_files(file_type='fits')\n"
-            
-            return [types.TextContent(type="text", text=response_text)]
+            result = astro_server.fits_converter.convert_to_fits(**arguments)
+            return [types.TextContent(text=f"Successfully converted to FITS: {result['fits_file']}")]
+        
+        elif name == "list_astroquery_services":
+            services = astro_server.list_astroquery_services()
+            output = json.dumps(services, indent=2)
+            return [types.TextContent(text=output)]
         
         else:
-            return [types.TextContent(
-                type="text",
-                text=f"Unknown tool: {name}"
-            )]
+            raise ValueError(f"Unknown tool: {name}")
     
     except Exception as e:
         logger.error(f"Error in tool {name}: {str(e)}")
