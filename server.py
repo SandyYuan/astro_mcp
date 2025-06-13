@@ -97,6 +97,14 @@ class AstroMCPServer:
         """List all available astroquery services."""
         return self.astroquery.list_services()
     
+    def get_astroquery_service_details(self, service_name: str) -> Dict[str, Any]:
+        """Get detailed information about a specific astroquery service."""
+        return self.astroquery.get_service_details(service_name)
+    
+    def search_astroquery_services(self, **criteria) -> List[str]:
+        """Search astroquery services by various criteria."""
+        return self.astroquery.search_services(**criteria)
+    
     def get_all_files(
         self,
         source: str = None,
@@ -460,6 +468,31 @@ async def handle_list_tools() -> list[types.Tool]:
             name="list_astroquery_services",
             description="List all available astroquery services discovered by the server",
             inputSchema={"type": "object", "properties": {}}
+        ),
+        types.Tool(
+            name="get_astroquery_service_details",
+            description="Get detailed information about a specific astroquery service including capabilities, data types, and example queries",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "service_name": {"type": "string", "description": "Name of the astroquery service (e.g., 'simbad', 'vizier', 'gaia')"}
+                },
+                "required": ["service_name"]
+            }
+        ),
+        types.Tool(
+            name="search_astroquery_services",
+            description="Search astroquery services by data type, wavelength coverage, object type, or other criteria",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "data_type": {"type": "string", "description": "Filter by data type (e.g., 'images', 'spectra', 'catalogs', 'photometry')"},
+                    "wavelength": {"type": "string", "description": "Filter by wavelength coverage (e.g., 'optical', 'radio', 'infrared', 'x-ray')"},
+                    "object_type": {"type": "string", "description": "Filter by object type (e.g., 'stars', 'galaxies', 'quasars')"},
+                    "capability": {"type": "string", "description": "Filter by capability (e.g., 'query_region', 'query_object')"},
+                    "requires_auth": {"type": "boolean", "description": "Filter by authentication requirement"}
+                }
+            }
         )
     ]
 
@@ -688,6 +721,18 @@ View file info: preview_data('{save_result['file_id']}')
         
         elif name == "list_astroquery_services":
             services = astro_server.list_astroquery_services()
+            output = json.dumps(services, indent=2)
+            return [types.TextContent(text=output)]
+        
+        elif name == "get_astroquery_service_details":
+            service_name = arguments["service_name"]
+            details = astro_server.get_astroquery_service_details(service_name)
+            output = json.dumps(details, indent=2)
+            return [types.TextContent(text=output)]
+        
+        elif name == "search_astroquery_services":
+            criteria = {k: v for k, v in arguments.items() if k != "service_name"}
+            services = astro_server.search_astroquery_services(**criteria)
             output = json.dumps(services, indent=2)
             return [types.TextContent(text=output)]
         
