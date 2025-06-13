@@ -419,26 +419,3 @@ def get_service_info(service_name: str) -> dict:
         'object_types': 'unknown',
         'example_queries': []
     })
-
-def list_services_by_data_type(data_type: str) -> list:
-    """Get list of services that provide a specific data type."""
-    matching_services = []
-    for service, info in ASTROQUERY_SERVICE_INFO.items():
-        if data_type.lower() in [dt.lower() for dt in info.get('data_types', [])]:
-            matching_services.append(service)
-    return matching_services
-
-def list_services_by_wavelength(wavelength: str) -> list:
-    """Get list of services that cover a specific wavelength range."""
-    matching_services = []
-    wavelength_lower = wavelength.lower()
-    for service, info in ASTROQUERY_SERVICE_INFO.items():
-        coverage = info.get('wavelength_coverage', '').lower()
-        if wavelength_lower in coverage or coverage == 'all':
-            matching_services.append(service)
-    return matching_services
-
-def get_example_queries(service_name: str) -> list:
-    """Get example queries for a specific service."""
-    service_info = get_service_info(service_name)
-    return service_info.get('example_queries', [])
