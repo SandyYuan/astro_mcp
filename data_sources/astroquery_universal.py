@@ -234,6 +234,174 @@ class AstroqueryUniversal(BaseDataSource):
         matches.sort(key=lambda x: x['score'], reverse=True)
         return matches
 
+    def universal_query(self, service_name: str, query_type: str = 'auto', **kwargs) -> Dict[str, Any]:
+        """
+        Universal query interface for any astroquery service.
+        
+        Parameters
+        ----------
+        service_name : str
+            Name of the astroquery service
+        query_type : str
+            Type of query to perform (auto-detected if 'auto')
+        **kwargs : dict
+            Query parameters passed to the service
+        
+        Returns
+        -------
+        dict
+            Query results with status and data
+        """
+        try:
+            # Ensure the service class is available
+            if service_name not in self._services:
+                raise ValueError(f"Unknown service: {service_name}")
+            
+            service = self.get_service(service_name)
+            
+            # Auto-detect query type
+            if query_type == 'auto':
+                query_type = self._detect_query_type(service_name, kwargs)
+            
+            if not hasattr(service, query_type):
+                raise AttributeError(f"Service '{service_name}' does not have method '{query_type}'")
+
+            # Parameter preprocessing
+            processed_kwargs = self._preprocess_parameters(service_name, query_type, kwargs)
+            
+            # Execute query
+            method = getattr(service, query_type)
+            result = method(**processed_kwargs)
+            
+            # Process and save results
+            return self._process_results(result, service_name, query_type, kwargs)
+            
+        except Exception as e:
+            logger.error(f"Query failed for {service_name}: {str(e)}")
+            return {
+                'status': 'error',
+                'service': service_name,
+                'query_type': query_type,
+                'error': str(e),
+                'help': self._generate_error_help(service_name, query_type, e)
+            }
+
+    def _detect_query_type(self, service_name: str, kwargs) -> str:
+        """Auto-detect the appropriate query method based on parameters."""
+        capabilities = self._services[service_name]['capabilities']
+        
+        # Check for object name query
+        if any(key in kwargs for key in ['object_name', 'objectname', 'target', 'source']):
+            if 'query_object' in capabilities:
+                return 'query_object'
+        
+        # Check for coordinate query
+        if 'coordinates' in kwargs or all(k in kwargs for k in ['ra', 'dec']):
+            if 'query_region' in capabilities:
+                return 'query_region'
+        
+        # Check for catalog query (Vizier specific)
+        if 'catalog' in kwargs and 'query_catalog' in capabilities:
+            return 'query_catalog'
+        
+        # Default to generic query if available
+        if 'query' in capabilities:
+            return 'query'
+        
+        # Fallback to first available high-priority query method
+        for method in ['query_object', 'query_region', 'query_criteria']:
+            if method in capabilities:
+                return method
+        
+        if capabilities:
+            return list(capabilities.keys())[0]
+
+        raise ValueError(f"Could not determine appropriate query method for service {service_name}")
+
+    def _preprocess_parameters(self, service_name: str, query_type: str, kwargs: Dict) -> Dict:
+        """Preprocess parameters for compatibility."""
+        processed = kwargs.copy()
+        
+        # Handle coordinate conversion for region queries
+        if query_type == 'query_region':
+            if 'ra' in processed and 'dec' in processed and 'coordinates' not in processed:
+                from astropy.coordinates import SkyCoord
+                processed['coordinates'] = SkyCoord(
+                    ra=processed.pop('ra'),
+                    dec=processed.pop('dec'),
+                    unit=(u.deg, u.deg)
+                )
+            
+            if 'radius' in processed and not hasattr(processed['radius'], 'unit'):
+                processed['radius'] = processed['radius'] * u.deg
+    
+        # Handle object name aliases
+        if query_type == 'query_object':
+            # This is a common parameter name in astroquery
+            target_param = 'object_name' 
+            for alias in ['objectname', 'target', 'source']:
+                if alias in processed:
+                    processed[target_param] = processed.pop(alias)
+                    break
+        
+        return processed
+
+    def _process_results(self, result, service_name, query_type, kwargs):
+        """Standardize query results."""
+        data = None
+        num_rows = 0
+        if isinstance(result, Table):
+            # Convert astropy Table to list of dicts for JSON friendliness
+            data = [dict(row) for row in result]
+            num_rows = len(data)
+        elif result is None:
+            data = []
+        elif isinstance(result, list) and all(isinstance(item, dict) for item in result):
+            data = result
+            num_rows = len(data)
+        else:
+            # For other types, just represent them as a string
+            data = str(result)
+            num_rows = 1 if data else 0
+
+        # Make kwargs serializable for the response
+        serializable_kwargs = {}
+        for k, v in kwargs.items():
+            if isinstance(v, (u.Quantity, SkyCoord)):
+                serializable_kwargs[k] = str(v)
+            else:
+                serializable_kwargs[k] = v
+
+        return {
+            'status': 'success',
+            'service': service_name,
+            'query_type': query_type,
+            'query_params': serializable_kwargs,
+            'num_results': num_rows,
+            'results': data
+        }
+
+    def _generate_error_help(self, service_name: str, query_type: str, exception: Exception) -> str:
+        """Generate helpful error messages."""
+        try:
+            service_details = self.get_service_details(service_name)
+            capabilities = service_details.get('capabilities', [])
+            examples = service_details.get('example_queries', [])
+            
+            help_text = f"The query failed for service '{service_name}' while attempting method '{query_type}'.\n"
+            help_text += f"Error: {exception}\n\n"
+            help_text += f"Available query methods for this service are: {', '.join(capabilities)}\n"
+            
+            if examples:
+                help_text += "Here are some example queries for this service:\n"
+                for ex in examples:
+                    help_text += f"- {ex['description']}: `{ex['query']}`\n"
+            
+            help_text += "\nTip: Ensure your parameters match the requirements of the query method. You can specify a `query_type` directly to bypass auto-detection."
+            return help_text
+        except Exception as e:
+            return f"An error occurred while generating help: {e}"
+
     def get_service(self, service_name: str):
         """Get or create a service instance."""
         if service_name not in self._services:

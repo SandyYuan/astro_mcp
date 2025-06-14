@@ -493,6 +493,26 @@ async def handle_list_tools() -> list[types.Tool]:
                     "requires_auth": {"type": "boolean", "description": "Filter by authentication requirement"}
                 }
             }
+        ),
+        types.Tool(
+            name="astroquery_query",
+            description="Perform a universal query against any astroquery service, with automatic parameter handling and result formatting. Use 'search_astroquery_services' to discover services and their capabilities first.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "service_name": {
+                        "type": "string",
+                        "description": "The name of the astroquery service to use (e.g., 'simbad', 'vizier')."
+                    },
+                    "query_type": {
+                        "type": "string",
+                        "description": "Optional: the specific query method to use (e.g., 'query_object'). Defaults to 'auto' for automatic detection.",
+                        "default": "auto"
+                    }
+                },
+                "required": ["service_name"],
+                "additionalProperties": True
+            }
         )
     ]
 
@@ -742,6 +762,33 @@ View file info: preview_data('{save_result['file_id']}')
                 response += f"- {service['full_name']} ({service['service']}) - Score: {service['score']}\n"
                 response += f"  Description: {service['description']}\n"
                 response += f"  Reasons: {', '.join(service['reasons'])}\n\n"
+            
+            return [types.TextContent(text=response)]
+        
+        elif name == "astroquery_query":
+            result = astro_server.astroquery.universal_query(**arguments)
+            
+            if result['status'] == 'error':
+                # The help text is already pre-formatted
+                return [types.TextContent(text=result['help'])]
+
+            # Success case
+            response = f"Successfully executed '{result['query_type']}' on '{result['service']}'.\n"
+            response += f"Found {result['num_results']} results.\n\n"
+            
+            if result['num_results'] > 0:
+                results_data = result['results']
+                if isinstance(results_data, str):
+                    response += "Result:\n"
+                    response += results_data
+                else:
+                    response += "Showing first 5 results:\n"
+                    # Pretty print the first few results
+                    preview_data = results_data[:5]
+                    response += json.dumps(preview_data, indent=2)
+
+                    if result['num_results'] > 5:
+                        response += f"\n\n... and {result['num_results'] - 5} more."
             
             return [types.TextContent(text=response)]
         
