@@ -773,7 +773,7 @@ View file info: preview_data('{save_result['file_id']}')
         elif name == "astroquery_query":
             result = astro_server.astroquery.universal_query(**arguments)
             
-            if result['status'] == 'error':
+            if result['status'] in ['error', 'auth_required']:
                 # The help text is already pre-formatted
                 return [types.TextContent(text=result['help'])]
 

@@ -307,6 +307,12 @@ class AstroqueryUniversal(BaseDataSource):
             if service_name not in self._services:
                 raise ValueError(f"Unknown service: {service_name}")
             
+            service_info = self._services[service_name]
+            
+            # --- AUTHENTICATION CHECK ---
+            if service_info.get('requires_auth'):
+                return self._generate_auth_required_help(service_name, query_type, kwargs)
+
             service = self.get_service(service_name)
             
             # Auto-detect query type
@@ -450,6 +456,64 @@ class AstroqueryUniversal(BaseDataSource):
             'num_results': num_rows,
             'results': data,
             'save_result': save_result
+        }
+
+    def _generate_auth_required_help(self, service_name: str, query_type: str, kwargs: dict) -> dict:
+        """Generate a standardized response for services that require authentication."""
+        service_class_name = self._services[service_name]['class'].__name__
+        
+        # Build the example script
+        script_lines = [
+            f"from astroquery.{service_name} import {service_class_name}",
+            "import astropy.units as u",
+            "from astropy.coordinates import SkyCoord",
+            "",
+            "# --- Step 1: Login ---",
+            f"service = {service_class_name}()",
+            "# Replace with your actual credentials",
+            "service.login('your_username')",
+            "",
+            "# --- Step 2: Prepare Query Parameters ---"
+        ]
+
+        # Reconstruct kwargs for the example
+        param_lines = []
+        for key, value in kwargs.items():
+            if key == 'auto_save': continue # Not part of the astroquery call
+            if isinstance(value, str):
+                param_lines.append(f"    {key}='{value}'")
+            else:
+                param_lines.append(f"    {key}={value}")
+        
+        param_str = ",\n".join(param_lines)
+        
+        # Use auto-detected query type if needed
+        final_query_type = query_type
+        if final_query_type == 'auto':
+            try:
+                final_query_type = self._detect_query_type(service_name, kwargs)
+            except ValueError:
+                final_query_type = "[could not auto-detect, please specify]"
+
+        script_lines.append(f"# --- Step 3: Run Query ---")
+        script_lines.append(f"results = service.{final_query_type}(")
+        script_lines.append(param_str)
+        script_lines.append(")")
+        script_lines.append("")
+        script_lines.append("print(results)")
+
+        help_text = (
+            f"AUTHENTICATION REQUIRED for service '{service_name}'.\n\n"
+            "This service requires a login, and automatic authentication is not yet implemented in this tool.\n"
+            "To proceed, please run the following Python code in your own environment with your credentials:\n\n"
+            "-------------------- PYTHON SCRIPT --------------------\n"
+            f"{'\\n'.join(script_lines)}\n"
+            "-------------------------------------------------------"
+        )
+        
+        return {
+            'status': 'auth_required',
+            'help': help_text
         }
 
     def _generate_error_help(self, service_name: str, query_type: str, exception: Exception) -> str:
