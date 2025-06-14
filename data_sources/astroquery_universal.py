@@ -147,12 +147,15 @@ class AstroqueryUniversal(BaseDataSource):
         return sorted(service_list, key=lambda x: x['name'])
 
     def get_service_details(self, service_name: str) -> Dict[str, Any]:
-        """Get detailed information about a specific service."""
+        """Get detailed information about a specific service, including method signatures."""
         if service_name not in self._services:
             raise ValueError(f"Unknown service: {service_name}")
         
         meta = self._services[service_name]
-        return {
+        service_class = meta.get('class')
+
+        # Base details
+        details = {
             "name": service_name,
             "full_name": meta['full_name'],
             "description": meta['description'],
@@ -163,8 +166,53 @@ class AstroqueryUniversal(BaseDataSource):
             "requires_auth": meta['requires_auth'],
             "example_queries": meta['example_queries'],
             "module_path": f"astroquery.{service_name}",
-            "class_name": meta['class'].__name__ if meta['class'] else "Unknown"
+            "class_name": service_class.__name__ if service_class else "Unknown",
+            "methods": {}
         }
+
+        if not service_class:
+            return details
+
+        # Introspect methods to get parameters and docstrings
+        for method_name in details['capabilities']:
+            if hasattr(service_class, method_name):
+                method = getattr(service_class, method_name)
+                
+                try:
+                    sig = inspect.signature(method)
+                    method_info = {
+                        'docstring': inspect.cleandoc(method.__doc__ or "No docstring available.").split('\\n')[0],
+                        'parameters': {}
+                    }
+                    
+                    for param in sig.parameters.values():
+                        # Skip self, args, kwargs
+                        if param.name in ['self', 'args', 'kwargs']:
+                            continue
+                        
+                        param_info = {}
+                        if param.default is not inspect.Parameter.empty:
+                            param_info['default'] = str(param.default)
+                        else:
+                            param_info['required'] = True
+                            
+                        if param.annotation is not inspect.Parameter.empty:
+                            # Clean up the type annotation string
+                            param_info['type'] = str(param.annotation).replace("<class '", "").replace("'>", "")
+                        else:
+                            param_info['type'] = 'Any'
+
+                        method_info['parameters'][param.name] = param_info
+                    
+                    details['methods'][method_name] = method_info
+
+                except (ValueError, TypeError): # Some methods may not be introspectable
+                    details['methods'][method_name] = {
+                        'docstring': 'Could not inspect method signature.',
+                        'parameters': {}
+                    }
+
+        return details
 
     def search_services(self,
                         data_type: str = None,
