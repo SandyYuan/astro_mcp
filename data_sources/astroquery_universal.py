@@ -166,52 +166,73 @@ class AstroqueryUniversal(BaseDataSource):
             "class_name": meta['class'].__name__ if meta['class'] else "Unknown"
         }
 
-    def search_services(self, **criteria) -> List[str]:
-        """Search for services based on various criteria."""
-        matching_services = []
+    def search_services(self,
+                        data_type: str = None,
+                        wavelength: str = None,
+                        object_type: str = None,
+                        capability: str = None,
+                        requires_auth: bool = None) -> List[Dict]:
+        """Find and rank services that match specified criteria."""
+        matches = []
         
-        for service_name, meta in self._services.items():
-            match = True
-            
+        for service_name, service_info in self._services.items():
+            score = 0
+            match_reasons = []
+
             # Filter by data type
-            if 'data_type' in criteria:
-                data_type = criteria['data_type'].lower()
-                service_data_types = [dt.lower() for dt in meta['data_types']]
-                if data_type not in service_data_types:
-                    match = False
-            
+            if data_type:
+                service_data_types = [dt.lower() for dt in service_info.get('data_types', [])]
+                if data_type.lower() in service_data_types:
+                    score += 3
+                    match_reasons.append(f"provides {data_type} data")
+
             # Filter by wavelength coverage
-            if 'wavelength' in criteria:
-                wavelength = criteria['wavelength'].lower()
-                coverage = meta['wavelength_coverage'].lower()
-                if wavelength not in coverage and coverage != 'all':
-                    match = False
-            
+            if wavelength:
+                coverage = service_info.get('wavelength_coverage', '').lower()
+                if wavelength.lower() in coverage or coverage == 'all':
+                    score += 2
+                    match_reasons.append(f"covers {wavelength} wavelengths")
+
             # Filter by object type
-            if 'object_type' in criteria:
-                object_type = criteria['object_type'].lower()
-                if isinstance(meta['object_types'], list):
-                    service_object_types = [ot.lower() for ot in meta['object_types']]
-                    if object_type not in service_object_types and 'all' not in service_object_types:
-                        match = False
-                elif meta['object_types'] != 'all' and object_type not in meta['object_types'].lower():
-                    match = False
-            
+            if object_type:
+                obj_types = service_info.get('object_types', 'all')
+                object_type_lower = object_type.lower()
+                
+                match_found = False
+                if isinstance(obj_types, list):
+                    service_object_types = [ot.lower() for ot in obj_types]
+                    if 'all' in service_object_types or object_type_lower in service_object_types:
+                        match_found = True
+                elif obj_types == 'all' or object_type_lower in obj_types.lower():
+                    match_found = True
+                
+                if match_found:
+                    score += 2
+                    match_reasons.append(f"includes {object_type}")
+
             # Filter by capability
-            if 'capability' in criteria:
-                capability = criteria['capability']
-                if capability not in meta['capabilities']:
-                    match = False
+            if capability and capability in service_info['capabilities']:
+                score += 3
+                match_reasons.append(f"supports '{capability}'")
             
             # Filter by authentication requirement
-            if 'requires_auth' in criteria:
-                if meta['requires_auth'] != criteria['requires_auth']:
-                    match = False
+            if requires_auth is not None and service_info['requires_auth'] == requires_auth:
+                score += 1
+                reason = "does not require authentication" if not requires_auth else "matches auth requirement"
+                match_reasons.append(reason)
             
-            if match:
-                matching_services.append(service_name)
-        
-        return sorted(matching_services)
+            if score > 0:
+                matches.append({
+                    'service': service_name,
+                    'full_name': service_info['full_name'],
+                    'score': score,
+                    'reasons': match_reasons,
+                    'description': service_info['description'].split('\\n')[0]
+                })
+
+        # Sort by score
+        matches.sort(key=lambda x: x['score'], reverse=True)
+        return matches
 
     def get_service(self, service_name: str):
         """Get or create a service instance."""

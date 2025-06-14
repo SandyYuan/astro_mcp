@@ -733,8 +733,17 @@ View file info: preview_data('{save_result['file_id']}')
         elif name == "search_astroquery_services":
             criteria = {k: v for k, v in arguments.items() if k != "service_name"}
             services = astro_server.search_astroquery_services(**criteria)
-            output = json.dumps(services, indent=2)
-            return [types.TextContent(text=output)]
+            
+            if not services:
+                return [types.TextContent(text="No matching services found.")]
+            
+            response = "Found services matching your criteria:\n\n"
+            for service in services:
+                response += f"- {service['full_name']} ({service['service']}) - Score: {service['score']}\n"
+                response += f"  Description: {service['description']}\n"
+                response += f"  Reasons: {', '.join(service['reasons'])}\n\n"
+            
+            return [types.TextContent(text=response)]
         
         else:
             raise ValueError(f"Unknown tool: {name}")
