@@ -508,6 +508,11 @@ async def handle_list_tools() -> list[types.Tool]:
                         "type": "string",
                         "description": "Optional: the specific query method to use (e.g., 'query_object'). Defaults to 'auto' for automatic detection.",
                         "default": "auto"
+                    },
+                    "auto_save": {
+                        "type": "boolean",
+                        "description": "Automatically save table-like results to a file.",
+                        "default": True
                     }
                 },
                 "required": ["service_name"],
@@ -773,22 +778,30 @@ View file info: preview_data('{save_result['file_id']}')
                 return [types.TextContent(text=result['help'])]
 
             # Success case
-            response = f"Successfully executed '{result['query_type']}' on '{result['service']}'.\n"
-            response += f"Found {result['num_results']} results.\n\n"
+            response = f"Successfully executed '{result['query_type']}' on '{result['service']}'.\\n"
+            response += f"Found {result['num_results']} results.\\n\\n"
             
-            if result['num_results'] > 0:
+            # Add file info if auto-saved
+            save_result = result.get('save_result')
+            if save_result and save_result['status'] == 'success':
+                response += f"RESULTS AUTOMATICALLY SAVED:\\n"
+                response += f"- File ID: {save_result['file_id']}\\n"
+                response += f"- Filename: {save_result['filename']}\\n"
+                response += f"\\nUse preview_data('{save_result['file_id']}') to inspect the saved data.\\n"
+            
+            elif result['num_results'] > 0:
                 results_data = result['results']
                 if isinstance(results_data, str):
-                    response += "Result:\n"
+                    response += "Result:\\n"
                     response += results_data
                 else:
-                    response += "Showing first 5 results:\n"
+                    response += "Showing first 5 results (data was not saved):\\n"
                     # Pretty print the first few results
                     preview_data = results_data[:5]
                     response += json.dumps(preview_data, indent=2)
 
                     if result['num_results'] > 5:
-                        response += f"\n\n... and {result['num_results'] - 5} more."
+                        response += f"\\n\\n... and {result['num_results'] - 5} more."
             
             return [types.TextContent(text=response)]
         

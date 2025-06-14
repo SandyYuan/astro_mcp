@@ -282,7 +282,7 @@ class AstroqueryUniversal(BaseDataSource):
         matches.sort(key=lambda x: x['score'], reverse=True)
         return matches
 
-    def universal_query(self, service_name: str, query_type: str = 'auto', **kwargs) -> Dict[str, Any]:
+    def universal_query(self, service_name: str, query_type: str = 'auto', auto_save: bool = True, **kwargs) -> Dict[str, Any]:
         """
         Universal query interface for any astroquery service.
         
@@ -292,6 +292,8 @@ class AstroqueryUniversal(BaseDataSource):
             Name of the astroquery service
         query_type : str
             Type of query to perform (auto-detected if 'auto')
+        auto_save : bool
+            Whether to automatically save results to a file (default: True)
         **kwargs : dict
             Query parameters passed to the service
         
@@ -322,7 +324,7 @@ class AstroqueryUniversal(BaseDataSource):
             result = method(**processed_kwargs)
             
             # Process and save results
-            return self._process_results(result, service_name, query_type, kwargs)
+            return self._process_results(result, service_name, query_type, kwargs, auto_save)
             
         except Exception as e:
             logger.error(f"Query failed for {service_name}: {str(e)}")
@@ -394,14 +396,34 @@ class AstroqueryUniversal(BaseDataSource):
         
         return processed
 
-    def _process_results(self, result, service_name, query_type, kwargs):
-        """Standardize query results."""
+    def _process_results(self, result, service_name, query_type, kwargs, auto_save):
+        """Standardize query results and handle auto-saving."""
         data = None
         num_rows = 0
+        save_result = None
+
         if isinstance(result, Table):
-            # Convert astropy Table to list of dicts for JSON friendliness
             data = [dict(row) for row in result]
             num_rows = len(data)
+
+            if auto_save and num_rows > 0:
+                # Generate filename
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"astroquery_{service_name}_{query_type}_{timestamp}.csv"
+                full_path = self.source_dir / filename
+                
+                # Save to CSV
+                result.write(full_path, format='csv', overwrite=True)
+                
+                # Register file
+                description = f"Results from astroquery service '{service_name}' using '{query_type}'"
+                save_result = self._register_file(
+                    filename=str(full_path),
+                    description=description,
+                    file_type='csv',
+                    metadata={'service': service_name, 'query_type': query_type, 'query_params': kwargs}
+                )
+
         elif result is None:
             data = []
         elif isinstance(result, list) and all(isinstance(item, dict) for item in result):
@@ -426,7 +448,8 @@ class AstroqueryUniversal(BaseDataSource):
             'query_type': query_type,
             'query_params': serializable_kwargs,
             'num_results': num_rows,
-            'results': data
+            'results': data,
+            'save_result': save_result
         }
 
     def _generate_error_help(self, service_name: str, query_type: str, exception: Exception) -> str:
