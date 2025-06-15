@@ -404,6 +404,12 @@ class AstroqueryUniversal(BaseDataSource):
                     processed[target_param] = processed.pop(alias)
                     break
         
+        # Handle SQL query parameter mapping
+        if query_type == 'query_sql' or 'sql' in query_type:
+            # SDSS and some other services use 'sql_query' instead of 'sql'
+            if 'sql' in processed and 'sql_query' not in processed:
+                processed['sql_query'] = processed.pop('sql')
+        
         return processed
 
     def _process_results(self, result, service_name, query_type, kwargs, auto_save):

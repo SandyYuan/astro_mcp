@@ -764,7 +764,7 @@ View file info: preview_data('{save_result['file_id']}')
         
         elif name == "convert_to_fits":
             result = astro_server.fits_converter.convert_to_fits(**arguments)
-            return [types.TextContent(type="text", text=f"Successfully converted to FITS: {result['fits_file']}")]
+            return [types.TextContent(type="text", text=f"Successfully converted to FITS: {result['output_file']}")]
         
         elif name == "list_astroquery_services":
             services = astro_server.list_astroquery_services()
@@ -803,8 +803,13 @@ View file info: preview_data('{save_result['file_id']}')
             response += "\n"
 
             response += "Wavelength Coverage:\n"
-            for wl in details['wavelengths']:
-                response += f"- {wl}\n"
+            # Handle the case where wavelength_coverage might be a string or list
+            wavelength_coverage = details['wavelength_coverage']
+            if isinstance(wavelength_coverage, list):
+                for wl in wavelength_coverage:
+                    response += f"- {wl}\n"
+            else:
+                response += f"- {wavelength_coverage}\n"
             response += "\n"
 
             if details['example_queries']:
