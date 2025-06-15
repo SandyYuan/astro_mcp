@@ -738,29 +738,29 @@ View file info: preview_data('{save_result['file_id']}')
             stats = astro_server.get_global_statistics()
             # Pretty print the stats dictionary
             output = json.dumps(stats, indent=2)
-            return [types.TextContent(text=output)]
+            return [types.TextContent(type="text", text=output)]
         
         elif name == "convert_to_fits":
             result = astro_server.fits_converter.convert_to_fits(**arguments)
-            return [types.TextContent(text=f"Successfully converted to FITS: {result['fits_file']}")]
+            return [types.TextContent(type="text", text=f"Successfully converted to FITS: {result['fits_file']}")]
         
         elif name == "list_astroquery_services":
             services = astro_server.list_astroquery_services()
             output = json.dumps(services, indent=2)
-            return [types.TextContent(text=output)]
+            return [types.TextContent(type="text", text=output)]
         
         elif name == "get_astroquery_service_details":
             service_name = arguments["service_name"]
             details = astro_server.get_astroquery_service_details(service_name)
             output = json.dumps(details, indent=2)
-            return [types.TextContent(text=output)]
+            return [types.TextContent(type="text", text=output)]
         
         elif name == "search_astroquery_services":
             criteria = {k: v for k, v in arguments.items() if k != "service_name"}
             services = astro_server.search_astroquery_services(**criteria)
             
             if not services:
-                return [types.TextContent(text="No matching services found.")]
+                return [types.TextContent(type="text", text="No matching services found.")]
             
             response = "Found services matching your criteria:\n\n"
             for service in services:
@@ -768,14 +768,14 @@ View file info: preview_data('{save_result['file_id']}')
                 response += f"  Description: {service['description']}\n"
                 response += f"  Reasons: {', '.join(service['reasons'])}\n\n"
             
-            return [types.TextContent(text=response)]
+            return [types.TextContent(type="text", text=response)]
         
         elif name == "astroquery_query":
             result = astro_server.astroquery.universal_query(**arguments)
             
             if result['status'] in ['error', 'auth_required']:
                 # The help text is already pre-formatted
-                return [types.TextContent(text=result['help'])]
+                return [types.TextContent(type="text", text=result['help'])]
 
             # Success case
             response = f"Successfully executed '{result['query_type']}' on '{result['service']}'.\\n"
@@ -803,7 +803,7 @@ View file info: preview_data('{save_result['file_id']}')
                     if result['num_results'] > 5:
                         response += f"\\n\\n... and {result['num_results'] - 5} more."
             
-            return [types.TextContent(text=response)]
+            return [types.TextContent(type="text", text=response)]
         
         else:
             raise ValueError(f"Unknown tool: {name}")
