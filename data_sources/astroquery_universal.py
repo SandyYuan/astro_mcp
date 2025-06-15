@@ -11,6 +11,9 @@ import inspect
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime
+import uuid
+from pathlib import Path
+import numpy as np
 
 import astroquery
 from astropy.table import Table
@@ -28,6 +31,7 @@ class AstroqueryUniversal(BaseDataSource):
     
     def __init__(self, base_dir: str = None):
         super().__init__(base_dir=base_dir, source_name="astroquery")
+        self.source_dir = self.base_dir / self.source_name
         self._services = {}
         self._service_metadata = {}
         self._discover_services()
@@ -408,8 +412,28 @@ class AstroqueryUniversal(BaseDataSource):
         num_rows = 0
         save_result = None
 
+        def clean_value(value):
+            """Converts numpy/special types to standard python types for JSON."""
+            if isinstance(value, (np.integer, np.int64)):
+                return int(value)
+            if isinstance(value, (np.floating, np.float32, np.float64)):
+                return float(value)
+            if isinstance(value, bytes):
+                return value.decode('utf-8', 'ignore')
+            return value
+        
+        def process_row(row):
+            """Safely processes a dict or an astropy.table.Row into a clean dict."""
+            if isinstance(row, dict):
+                return {k: clean_value(v) for k, v in row.items()}
+            # astropy.table.Row can be accessed by column name
+            elif hasattr(row, 'colnames'):
+                return {col: clean_value(row[col]) for col in row.colnames}
+            # Handle other potential non-row items in a list
+            return clean_value(row)
+
         if isinstance(result, Table):
-            data = [dict(row) for row in result]
+            data = [process_row(row) for row in result]
             num_rows = len(data)
 
             if auto_save and num_rows > 0:
@@ -423,17 +447,19 @@ class AstroqueryUniversal(BaseDataSource):
                 
                 # Register file
                 description = f"Results from astroquery service '{service_name}' using '{query_type}'"
+                serializable_kwargs = {k: str(v) for k, v in kwargs.items()}
                 save_result = self._register_file(
                     filename=str(full_path),
                     description=description,
                     file_type='csv',
-                    metadata={'service': service_name, 'query_type': query_type, 'query_params': kwargs}
+                    metadata={'service': service_name, 'query_type': query_type, 'query_params': serializable_kwargs}
                 )
 
         elif result is None:
             data = []
-        elif isinstance(result, list) and all(isinstance(item, dict) for item in result):
-            data = result
+            num_rows = 0
+        elif isinstance(result, list):
+            data = [process_row(row) for row in result]
             num_rows = len(data)
         else:
             # For other types, just represent them as a string
@@ -457,6 +483,42 @@ class AstroqueryUniversal(BaseDataSource):
             'results': data,
             'save_result': save_result
         }
+
+    def _register_file(self, filename: str, description: str, file_type: str, metadata: dict) -> dict:
+        """
+        Registers a new file with the central registry and updates statistics.
+        This is a core piece of functionality that should be in the base class.
+        """
+        try:
+            file_path = Path(filename)
+            file_id = str(uuid.uuid4())
+            file_stat = file_path.stat()
+            
+            record = {
+                'id': file_id,
+                'source': self.source_name,
+                'filename': filename,
+                'description': description,
+                'file_type': file_type,
+                'size_bytes': file_stat.st_size,
+                'created': datetime.fromtimestamp(file_stat.st_ctime).isoformat(),
+                'metadata': metadata
+            }
+            
+            # Use the shared registry
+            self.registry['files'][file_id] = record
+            
+            # Update statistics
+            self.registry['statistics']['total_files'] += 1
+            self.registry['statistics']['total_size_bytes'] += file_stat.st_size
+            self.registry['statistics']['by_source'][self.source_name] = self.registry['statistics']['by_source'].get(self.source_name, 0) + 1
+            self.registry['statistics']['by_type'][file_type] = self.registry['statistics']['by_type'].get(file_type, 0) + 1
+            
+            return {'status': 'success', 'file_id': file_id, **record}
+        
+        except Exception as e:
+            logger.error(f"Failed to register file {filename}: {e}")
+            return {'status': 'error', 'error': str(e)}
 
     def _generate_auth_required_help(self, service_name: str, query_type: str, kwargs: dict) -> dict:
         """Generate a standardized response for services that require authentication."""
@@ -502,12 +564,13 @@ class AstroqueryUniversal(BaseDataSource):
         script_lines.append("")
         script_lines.append("print(results)")
 
+        script_text = "\\n".join(script_lines)
         help_text = (
-            f"AUTHENTICATION REQUIRED for service '{service_name}'.\n\n"
-            "This service requires a login, and automatic authentication is not yet implemented in this tool.\n"
-            "To proceed, please run the following Python code in your own environment with your credentials:\n\n"
-            "-------------------- PYTHON SCRIPT --------------------\n"
-            f"{'\\n'.join(script_lines)}\n"
+            f"AUTHENTICATION REQUIRED for service '{service_name}'.\\n\\n"
+            "This service requires a login, and automatic authentication is not yet implemented in this tool.\\n"
+            "To proceed, please run the following Python code in your own environment with your credentials:\\n\\n"
+            "-------------------- PYTHON SCRIPT --------------------\\n"
+            f"{script_text}\\n"
             "-------------------------------------------------------"
         )
         
