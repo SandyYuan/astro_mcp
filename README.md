@@ -2,6 +2,16 @@
 
 A modular Model Context Protocol (MCP) server that provides unified access to multiple astronomical datasets through a clean, extensible architecture.
 
+## Vision
+
+This MCP server aims to transform big-data astronomy from a software engineering problem into a natural language conversation. Instead of spending months learning astroquery APIs, researchers simply ask for what they need and get clean, processed analysis-ready data products.
+
+One expert solves the complexity once; thousands of scientists benefit forever. A student with little programming experience can now perform the same multi-survey analysis as an expert astronomer using nothing but natural language and an AI assistant.
+
+This isn't just about astronomy—it's a template for democratizing all of science. Every field has brilliant researchers spending 80% of their time on data wrangling instead of discovery. By removing that bottleneck, we accelerate the pace of scientific progress itself.
+
+The result: AI scientists that can seamlessly access and cross-match data from dozens of astronomical surveys, enabling discoveries that would have taken months of setup to attempt just a few years ago.
+
 ## Quick Setup for Cursor & Claude Desktop
 
 ### 1. Clone and Setup Environment
