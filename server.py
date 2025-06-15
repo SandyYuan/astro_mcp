@@ -496,23 +496,45 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="astroquery_query",
-            description="Perform a universal query against any astroquery service, with automatic parameter handling and result formatting. Use 'search_astroquery_services' to discover services and their capabilities first.",
+            description=(
+                "Perform a universal query against any astroquery service. "
+                "This tool attempts to automatically detect the query type (object, region, etc.) based on the provided parameters. "
+                "You can also specify the query type manually. "
+                "Use 'list_astroquery_services' and 'get_astroquery_service_details' to discover services and their specific capabilities. "
+                "The actual parameters available will depend on the chosen service."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "service_name": {
                         "type": "string",
-                        "description": "The name of the astroquery service to use (e.g., 'simbad', 'vizier')."
+                        "description": "The name of the astroquery service to use (e.g., 'simbad', 'vizier', 'mast')."
                     },
                     "query_type": {
                         "type": "string",
-                        "description": "Optional: the specific query method to use (e.g., 'query_object'). Defaults to 'auto' for automatic detection.",
+                        "description": "Optional: Manually specify the query method (e.g., 'query_object', 'query_region', 'query_criteria'). Defaults to 'auto' for automatic detection based on other parameters.",
                         "default": "auto"
                     },
                     "auto_save": {
                         "type": "boolean",
-                        "description": "Automatically save table-like results to a file.",
+                        "description": "Automatically save tabular results to a file. Set to false to only see a preview.",
                         "default": True
+                    },
+                    "object_name": {
+                        "type": "string",
+                        "description": "The name of the astronomical object to search for (e.g., 'M31', 'Betelgeuse'). Used for object-based queries."
+                    },
+                    "ra": {
+                        "type": "number",
+                        "description": "Right Ascension in decimal degrees. Used for region/cone searches."
+                    },
+                    "dec": {
+                        "type": "number",
+                        "description": "Declination in decimal degrees. Used for region/cone searches."
+                    },
+                    "radius": {
+                        "type": "number",
+                        "description": "Search radius in decimal degrees. Used for cone searches."
                     }
                 },
                 "required": ["service_name"],
@@ -746,14 +768,52 @@ View file info: preview_data('{save_result['file_id']}')
         
         elif name == "list_astroquery_services":
             services = astro_server.list_astroquery_services()
-            output = json.dumps(services, indent=2)
-            return [types.TextContent(type="text", text=output)]
+            
+            if not services:
+                return [types.TextContent(type="text", text="No astroquery services found.")]
+            
+            response = "Available Astroquery Services:\n"
+            response += "==============================\n\n"
+            for service in services:
+                response += f"- {service['full_name']} (service name: '{service['service']}')\n"
+                response += f"  Description: {service['description']}\n\n"
+            
+            response += "Use `get_astroquery_service_details` with a service name for more information."
+            return [types.TextContent(type="text", text=response)]
         
         elif name == "get_astroquery_service_details":
             service_name = arguments["service_name"]
             details = astro_server.get_astroquery_service_details(service_name)
-            output = json.dumps(details, indent=2)
-            return [types.TextContent(type="text", text=output)]
+
+            if not details:
+                return [types.TextContent(type="text", text=f"Service '{service_name}' not found.")]
+
+            response = f"Details for: {details['full_name']} (service: '{details['service']}')\n"
+            response += "=" * (len(response) - 1) + "\n\n"
+            response += f"Description: {details['description']}\n\n"
+            
+            response += "Capabilities:\n"
+            for cap in details['capabilities']:
+                response += f"- {cap}\n"
+            response += "\n"
+
+            response += "Data Types:\n"
+            for dt in details['data_types']:
+                response += f"- {dt}\n"
+            response += "\n"
+
+            response += "Wavelength Coverage:\n"
+            for wl in details['wavelengths']:
+                response += f"- {wl}\n"
+            response += "\n"
+
+            if details['example_queries']:
+                response += "Example Queries:\n"
+                for i, ex in enumerate(details['example_queries'], 1):
+                    response += f"{i}. {ex['description']}\n"
+                    response += f"   `{ex['query']}`\n"
+            
+            return [types.TextContent(type="text", text=response)]
         
         elif name == "search_astroquery_services":
             criteria = {k: v for k, v in arguments.items() if k != "service_name"}
@@ -771,6 +831,10 @@ View file info: preview_data('{save_result['file_id']}')
             return [types.TextContent(type="text", text=response)]
         
         elif name == "astroquery_query":
+            # Backward compatibility: user might still use 'object'
+            if 'object' in arguments and 'object_name' not in arguments:
+                arguments['object_name'] = arguments.pop('object')
+
             result = astro_server.astroquery.universal_query(**arguments)
             
             if result['status'] in ['error', 'auth_required']:
