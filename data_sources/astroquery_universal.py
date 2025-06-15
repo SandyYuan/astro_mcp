@@ -138,7 +138,7 @@ class AstroqueryUniversal(BaseDataSource):
         service_list = []
         for name, meta in self._services.items():
             service_list.append({
-                "name": name,
+                "service": name,
                 "full_name": meta['full_name'],
                 "description": meta['description'],
                 "data_types": meta['data_types'],
@@ -148,7 +148,7 @@ class AstroqueryUniversal(BaseDataSource):
                 "requires_auth": meta['requires_auth'],
                 "example_queries": meta['example_queries']
             })
-        return sorted(service_list, key=lambda x: x['name'])
+        return sorted(service_list, key=lambda x: x['service'])
 
     def get_service_details(self, service_name: str) -> Dict[str, Any]:
         """Get detailed information about a specific service, including method signatures."""
@@ -160,7 +160,7 @@ class AstroqueryUniversal(BaseDataSource):
 
         # Base details
         details = {
-            "name": service_name,
+            "service": service_name,
             "full_name": meta['full_name'],
             "description": meta['description'],
             "data_types": meta['data_types'],
