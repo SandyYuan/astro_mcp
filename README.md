@@ -28,8 +28,8 @@ conda activate mcp
 # Install dependencies
 pip install -r requirements.txt
 
-# Optional: Install astronomical libraries for full functionality
-pip install sparclclient datalab astropy
+# Install astronomical libraries for full functionality
+pip install sparclclient datalab astropy astroquery
 ```
 
 ### 2. Test the Server
@@ -45,6 +45,8 @@ from server import astro_server
 async def test():
     result = astro_server.get_global_statistics()
     print('✅ Server working:', result['total_files'], 'files in registry')
+    services = astro_server.list_astroquery_services()
+    print(f'✅ Astroquery: {len(services)} services discovered')
 asyncio.run(test())
 "
 ```
@@ -98,8 +100,9 @@ Edit your Claude Desktop MCP configuration file:
 1. **Restart Cursor/Claude Desktop** to load the new MCP server
 2. **Test with a query** like:
    - "Search for galaxies near RA=10.68, Dec=41.27"
-   - "List available astronomical data tools"
-   - "Show me file statistics for saved data"
+   - "Get Betelgeuse's coordinates from SIMBAD"
+   - "Find 10 BOSS galaxies around z=0.5 and save as FITS"
+   - "List available astroquery services"
 
 ### 6. Troubleshooting
 
@@ -123,7 +126,7 @@ python server.py
 ```bash
 # Install optional dependencies for full functionality
 conda activate mcp
-pip install sparclclient datalab astropy h5py
+pip install sparclclient datalab astropy astroquery h5py
 ```
 
 ## Usage Examples with Cursor/Claude Desktop
@@ -133,75 +136,91 @@ Once configured, you can ask natural language questions about astronomical data:
 ### Basic Searches
 - *"Find galaxies near RA=150.5, Dec=2.2 within 0.1 degrees"*
 - *"Search for quasars with redshift between 2 and 3"*
-- *"What objects are in the region from RA 10 to 11 degrees and Dec 40 to 42 degrees?"*
+- *"Get Betelgeuse's exact coordinates from SIMBAD"*
+- *"Find 10 BOSS galaxies around redshift 0.5"*
+
+### Multi-Survey Access
+- *"Query VizieR for stellar catalogs in the Orion region"*
+- *"Search SDSS for galaxies and save as FITS format"*
+- *"Get object information from multiple astronomical databases"*
+- *"List all available astroquery services for galaxy studies"*
 
 ### Spectral Data Analysis
 - *"Get the spectrum for DESI object with ID 1270d3c4-9d36-11ee-94ad-525400ad1336"*
 - *"Show me detailed spectral information for the brightest quasar you can find"*
 - *"Find a galaxy spectrum and analyze its redshift"*
 
-### File Management
+### File Management & Conversion
 - *"List all saved astronomical data files"*
-- *"Show me storage statistics for my downloaded data"*
-- *"Preview the structure of the latest galaxy search results"*
+- *"Convert my galaxy catalog to FITS format"*
+- *"Preview the structure of the latest search results"*
+- *"Show me storage statistics for downloaded data"*
 
 ### Advanced Queries
 - *"Find high-redshift galaxies (z > 1.5) and save their spectra"*
 - *"Search for objects in the COSMOS field and analyze their types"*
-- *"Compare object densities in different sky regions"*
+- *"Cross-match DESI and SDSS data for the same sky region"*
 
 The server will automatically:
-- Execute appropriate DESI database queries
-- Save results with descriptive filenames
-- Provide structured data analysis
+- Execute appropriate database queries across multiple surveys
+- Save results with descriptive filenames and metadata
 - Handle coordinate conversions and astronomical calculations
+- Convert data to standard formats (CSV, FITS) as needed
 
 ## Architecture
 
 ```
-mcp/
-├── server.py              # Main MCP server entry point
-├── data_sources/          # Modular data source implementations
+astro_mcp/
+├── server.py                    # Main MCP server entry point
+├── data_sources/               # Modular data source implementations
 │   ├── __init__.py
-│   ├── base.py           # Base class for all data sources
-│   ├── desi.py           # DESI survey data access
-│   └── act.py            # ACT telescope data (placeholder)
-├── io/                   # File handling and preview
+│   ├── base.py                # Base class for all data sources
+│   ├── desi.py                # DESI survey data access
+│   ├── astroquery_universal.py # Universal astroquery wrapper
+│   └── astroquery_metadata.py  # Service metadata and capabilities
+├── data_io/                   # File handling and conversion
 │   ├── __init__.py
-│   └── preview.py        # Data preview and structure analysis
-├── tools/                # Analysis tools (future expansion)
-│   └── __init__.py
-├── utils/                # Common utilities (future expansion)
-│   └── __init__.py
-├── tests/                # Test suite
-├── examples/             # Usage examples
-└── requirements.txt      # Project dependencies
+│   ├── preview.py             # Data preview and structure analysis
+│   └── fits_converter.py      # FITS format conversion
+├── tests/                     # Test suite
+├── examples/                  # Usage examples
+└── requirements.txt           # Project dependencies
 ```
 
 ## Features
 
-### 🔭 **Modular Data Sources**
+### 🔭 **Universal Astronomical Data Access**
 - **DESI**: Dark Energy Spectroscopic Instrument via SPARCL and Data Lab
-- **ACT**: Atacama Cosmology Telescope (coming soon)
-- Easy to add new astronomical surveys
+- **Astroquery**: Automatic access to 40+ astronomical services (SIMBAD, VizieR, SDSS, Gaia, etc.)
+- **Auto-discovery**: Automatically detects and configures available astroquery services
+- **Unified interface**: Same API for all data sources
 
-### 📁 **Unified File Management**
+### 📁 **Intelligent File Management**
 - Automatic data saving with descriptive filenames
 - Cross-source file registry and organization
-- Comprehensive metadata tracking
+- Comprehensive metadata tracking with provenance
 - Smart file preview with loading examples
+- FITS format conversion for astronomical compatibility
 
 ### 🔍 **Powerful Search Capabilities**
-- Coordinate-based searches (point, cone, box)
+- Coordinate-based searches (point, cone, box) across all surveys
 - Object type and redshift filtering
-- Cross-survey compatibility (planned)
-- Efficient SQL queries with Q3C spatial indexing
+- SQL queries with spatial indexing (Q3C)
+- Natural language query interpretation
+- Cross-survey data correlation
 
-### 📊 **Data Analysis Tools**
+### 📊 **Data Analysis & Conversion Tools**
 - Spectral data retrieval and analysis
+- Automatic FITS conversion for catalogs, spectra, and images
 - File structure inspection and preview
 - Statistics and storage management
-- Extensible tool architecture
+- Extensible tool architecture for custom analysis
+
+### 🤖 **AI-Optimized Interface**
+- Parameter preprocessing and validation
+- Intelligent error handling with helpful suggestions
+- Automatic format detection and conversion
+- Consistent metadata across all data sources
 
 ## Installation
 
@@ -218,8 +237,11 @@ cd astro_mcp
 conda create -n mcp python=3.11
 conda activate mcp
 
-# Install dependencies
+# Install core dependencies
 pip install -r requirements.txt
+
+# Install astronomical libraries
+pip install sparclclient datalab astropy astroquery
 
 # Optional: Install development dependencies
 pip install pytest coverage
@@ -231,18 +253,18 @@ pip install pytest coverage
 # Test the server components
 python test_server.py
 
-# Check available tools
+# Check available astroquery services
 python -c "
 import asyncio
-from server import server
+from server import astro_server
 
-async def show_tools():
-    tools = await server.list_tools()
-    print('Available tools:')
-    for tool in tools:
-        print(f'  - {tool.name}: {tool.description}')
+async def show_services():
+    services = astro_server.list_astroquery_services()
+    print(f'✅ Discovered {len(services)} astroquery services')
+    for service in services[:5]:  # Show first 5
+        print(f'  - {service["full_name"]} ({service["service"]})')
 
-asyncio.run(show_tools())
+asyncio.run(show_services())
 "
 ```
 
@@ -254,37 +276,55 @@ asyncio.run(show_tools())
 python server.py
 ```
 
-### 2. Use with MCP Clients
+### 2. Available Tools
 
 The server provides these main tools:
 
-- `search_objects` - Find astronomical objects
-- `get_spectrum_by_id` - Retrieve detailed spectral data  
-- `preview_data` - Inspect saved files
-- `list_files` - Manage saved data
-- `file_statistics` - Storage usage info
+**Data Access:**
+- `search_objects` - Find astronomical objects (DESI)
+- `astroquery_query` - Universal queries across 40+ astronomical services
+- `get_spectrum_by_id` - Retrieve detailed spectral data (DESI)
+
+**Service Discovery:**
+- `list_astroquery_services` - Show all available astronomical databases
+- `get_astroquery_service_details` - Detailed service information
+- `search_astroquery_services` - Find services by criteria
+
+**File Management:**
+- `preview_data` - Inspect saved files with structure analysis
+- `list_files` - Manage saved data across all sources
+- `file_statistics` - Storage usage and organization info
+- `convert_to_fits` - Convert data to FITS format
 
 ### 3. Example Usage
 
 ```python
-# Search for galaxies near M31
-search_objects(
-    source="desi",
-    ra=10.68, 
+# Get object coordinates from SIMBAD
+astroquery_query(
+    service_name="simbad",
+    object_name="Betelgeuse"
+)
+
+# Search SDSS for galaxies with SQL
+astroquery_query(
+    service_name="sdss",
+    query_type="query_sql",
+    sql="SELECT TOP 10 ra, dec, z FROM SpecObj WHERE class='GALAXY' AND z BETWEEN 0.1 AND 0.3"
+)
+
+# Search VizieR catalogs
+astroquery_query(
+    service_name="vizier",
+    ra=10.68,
     dec=41.27,
-    radius=0.1,
-    object_types=["GALAXY"]
+    radius=0.1
 )
 
-# Get detailed spectrum
-get_spectrum_by_id(
-    source="desi",
-    spectrum_id="1270d3c4-9d36-11ee-94ad-525400ad1336",
-    format="full"
+# Convert results to FITS
+convert_to_fits(
+    identifier="search_results.csv",
+    data_type="catalog"
 )
-
-# Preview saved data
-preview_data("desi_search_cone_ra10.68_dec41.27_GALAXY_25objs_20241231.json")
 ```
 
 ## Data Sources
@@ -298,18 +338,30 @@ preview_data("desi_search_cone_ra10.68_dec41.27_GALAXY_25objs_20241231.json")
 - **Coverage**: DESI EDR (~1.8M) and DR1 (~18M+ spectra)
 - **Wavelength**: 360-980 nm, Resolution: R ~ 2000-5500
 
+### Astroquery Universal Access
+
+**Status**: ✅ Fully Implemented
+
+**Major Services Available:**
+- **SIMBAD**: Object identification and basic data
+- **VizieR**: Astronomical catalogs and surveys
+- **SDSS**: Sloan Digital Sky Survey data and spectra
+- **Gaia**: Astrometric and photometric data
+- **MAST**: Hubble, JWST, and other space telescope archives
+- **IRSA**: Infrared and submillimeter archives
+- **ESASky**: Multi-mission astronomical data
+- **And 30+ more services...**
+
+**Capabilities:**
+- Automatic service discovery and configuration
+- Intelligent query type detection
+- Parameter preprocessing and validation
+- Unified error handling and help generation
+
 **Required Dependencies**:
 ```bash
-pip install sparclclient datalab
+pip install astroquery astropy
 ```
-
-### ACT (Atacama Cosmology Telescope)
-
-**Status**: 🚧 Placeholder (Coming Soon)
-
-- **Planned Features**: CMB map access, power spectrum analysis
-- **Data Releases**: DR4, DR6 support planned
-- **Analysis**: Cross-correlation tools, multi-frequency analysis
 
 ## Extending the Architecture
 
@@ -343,52 +395,57 @@ class AstroMCPServer:
         self.my_survey = MySurveyDataSource(base_dir=base_dir)
 ```
 
-3. **Add to tool routing**:
+### Adding New Astroquery Services
+
+The astroquery integration automatically discovers new services. To add custom metadata:
 
 ```python
-# In call_tool function
-if source == "my_survey":
-    return await astro_server.my_survey.search_objects(**args)
-```
-
-### Adding Analysis Tools
-
-Create new modules in `tools/` directory:
-
-```python
-# tools/power_spectrum.py
-def calculate_power_spectrum(data, **kwargs):
-    """Calculate angular power spectrum"""
-    pass
-
-# tools/correlation.py  
-def cross_correlate(dataset1, dataset2, **kwargs):
-    """Cross-correlate different datasets"""
-    pass
+# data_sources/astroquery_metadata.py
+ASTROQUERY_SERVICE_INFO = {
+    "my_service": {
+        "full_name": "My Custom Service",
+        "description": "Custom astronomical database",
+        "data_types": ["catalogs", "images"],
+        "wavelength_coverage": "optical",
+        "object_types": ["stars", "galaxies"],
+        "requires_auth": False,
+        "example_queries": [
+            {
+                "description": "Search by object name",
+                "query": "astroquery_query(service_name='my_service', object_name='M31')"
+            }
+        ]
+    }
+}
 ```
 
 ## File Organization
 
-Files are automatically organized by data source:
+Files are automatically organized by data source with comprehensive metadata:
 
 ```
 ~/astro_mcp_data/
-├── file_registry.json    # Global file registry
-├── desi/                 # DESI-specific files
-│   ├── desi_search_*.json
-│   └── spectrum_*.json
-└── act/                  # ACT-specific files (future)
-    └── cmb_maps_*.fits
+├── file_registry.json           # Global file registry with metadata
+├── desi/                        # DESI-specific files
+│   ├── desi_search_*.json      # Search results
+│   ├── spectrum_*.json         # Spectral data
+│   └── *.fits                  # FITS conversions
+└── astroquery/                 # Astroquery results
+    ├── astroquery_simbad_*.csv # SIMBAD queries
+    ├── astroquery_sdss_*.csv   # SDSS results
+    ├── astroquery_vizier_*.csv # VizieR catalogs
+    └── *.fits                  # FITS conversions
 ```
 
 ## Development
 
 ### Project Structure Benefits
 
-- **Modularity**: Easy to add new surveys and tools
+- **Modularity**: Easy to add new surveys and analysis tools
+- **Universal Access**: Single interface to 40+ astronomical databases
 - **Separation of Concerns**: Data access, I/O, and analysis are separate
 - **Testability**: Each module can be tested independently
-- **Scalability**: Clean architecture supports growth
+- **Scalability**: Clean architecture supports unlimited growth
 
 ### Testing
 
@@ -396,8 +453,9 @@ Files are automatically organized by data source:
 # Run all tests
 pytest
 
-# Test specific module
+# Test specific modules
 pytest tests/test_desi.py
+pytest tests/test_astroquery.py
 
 # Test with coverage
 pytest --cov=data_sources tests/
@@ -406,10 +464,10 @@ pytest --cov=data_sources tests/
 ### Contributing
 
 1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/new-survey`)
+2. Create a feature branch (`git checkout -b feature/new-capability`)
 3. Add your data source or tool following the existing patterns
 4. Write tests for new functionality
-5. Update documentation
+5. Update documentation and examples
 6. Submit a pull request
 
 ## Dependencies
@@ -420,9 +478,10 @@ pytest --cov=data_sources tests/
 - `numpy>=1.24.0` - Numerical computing
 
 ### Astronomical Libraries
+- `astroquery>=0.4.6` - Universal astronomical database access
+- `astropy>=5.0.0` - FITS files and astronomical calculations
 - `sparclclient>=1.0.0` - DESI SPARCL access
 - `datalab>=2.20.0` - NOAO Data Lab queries
-- `astropy>=5.0.0` - FITS files and astronomical calculations (optional)
 
 ### Optional Features
 - `h5py>=3.8.0` - HDF5 file support
@@ -438,7 +497,7 @@ If you use this software in your research, please cite:
 
 ```bibtex
 @software{astro_mcp,
-  title={Astro MCP: Modular Astronomical Data Access},
+  title={Astro MCP: Universal Astronomical Data Access for AI Agents},
   author={[Your Name]},
   year={2024},
   url={[Repository URL]}
@@ -455,16 +514,19 @@ If you use this software in your research, please cite:
 
 ### Current (v0.1.0)
 - ✅ DESI data access via SPARCL and Data Lab
-- ✅ Modular architecture with unified file management
-- ✅ Comprehensive data preview and file management
+- ✅ Universal astroquery integration (40+ services)
+- ✅ Automatic FITS conversion for all data types
+- ✅ Intelligent file management with comprehensive metadata
+- ✅ Natural language query interface
 
 ### Planned (v0.2.0)
-- 🚧 ACT CMB data access and analysis
-- 🚧 Cross-survey analysis tools
-- 🚧 Advanced astronomical calculations
+- 🚧 Cross-survey object matching and correlation
+- 🚧 Advanced astronomical calculations (distances, magnitudes)
+- 🚧 Time-series analysis for variable objects
+- 🚧 Visualization tools integration
 
 ### Future (v0.3.0+)
-- 🔮 Additional spectroscopic surveys
-- 🔮 Multi-wavelength data correlation
-- 🔮 Machine learning integration
-- 🔮 Real-time data streaming 
+- 🔮 Machine learning integration for object classification
+- 🔮 Real-time data streaming from surveys
+- 🔮 Custom analysis pipeline creation
+- 🔮 Multi-wavelength data correlation tools 
