@@ -567,7 +567,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
                 
                 # Remove source from arguments and pass to DESI search
                 desi_args = {k: v for k, v in arguments.items() if k != "source"}
-                result = await astro_server.desi.search_objects(**desi_args)
+                result = astro_server.desi.search_objects(**desi_args)
                 
                 if result['status'] == 'error':
                     return [types.TextContent(type="text", text=f"Error: {result['error']}")]
