@@ -382,8 +382,8 @@ class AstroqueryUniversal(BaseDataSource):
         """Preprocess parameters for compatibility."""
         processed = kwargs.copy()
         
-        # Handle coordinate conversion for region queries
-        if query_type == 'query_region':
+        # Handle coordinate conversion for region/image queries
+        if query_type in ['query_region', 'get_images', 'get_image_list']:
             if 'ra' in processed and 'dec' in processed and 'coordinates' not in processed:
                 from astropy.coordinates import SkyCoord
                 processed['coordinates'] = SkyCoord(
@@ -392,8 +392,13 @@ class AstroqueryUniversal(BaseDataSource):
                     unit=(u.deg, u.deg)
                 )
             
+            # Convert radius/size to astropy quantity if it's not already
             if 'radius' in processed and not hasattr(processed['radius'], 'unit'):
-                processed['radius'] = processed['radius'] * u.deg
+                processed['radius'] = processed.pop('radius') * u.deg
+            
+            # Some services use 'size' instead of 'radius'
+            if 'size' in processed and not hasattr(processed['size'], 'unit'):
+                processed['size'] = processed.pop('size') * u.deg
     
         # Handle object name aliases
         if query_type == 'query_object':
@@ -417,6 +422,8 @@ class AstroqueryUniversal(BaseDataSource):
         data = None
         num_rows = 0
         save_result = None
+
+        logger.info(f"Processing result of type: {type(result)} for service {service_name}")
 
         def clean_value(value):
             """Converts numpy/special types to standard python types for JSON."""
@@ -458,6 +465,66 @@ class AstroqueryUniversal(BaseDataSource):
                     filename=str(full_path),
                     description=description,
                     file_type='csv',
+                    metadata={'service': service_name, 'query_type': query_type, 'query_params': serializable_kwargs}
+                )
+        
+        # Handle a list of FITS images
+        elif isinstance(result, list) and len(result) > 0 and hasattr(result[0], 'writeto'):
+            logger.info(f"Detected a list of {len(result)} FITS-like objects.")
+            num_rows = len(result)
+            data = f"Returned {len(result)} FITS image(s)."
+
+            if auto_save:
+                saved_files_info = []
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                
+                for i, hdu in enumerate(result):
+                    filename = f"astroquery_{service_name}_{query_type}_{timestamp}_{i}.fits"
+                    full_path = self.source_dir / filename
+                    hdu.writeto(full_path, overwrite=True)
+                    
+                    description = f"FITS image {i+1}/{len(result)} from service '{service_name}'"
+                    serializable_kwargs = {k: str(v) for k, v in kwargs.items()}
+                    file_info = self._register_file(
+                        filename=str(full_path),
+                        description=description,
+                        file_type='fits',
+                        metadata={'service': service_name, 'query_type': query_type, 'query_params': serializable_kwargs}
+                    )
+                    saved_files_info.append(file_info)
+
+                if saved_files_info:
+                    first_file = saved_files_info[0]
+                    save_result = {
+                        'status': 'success',
+                        'file_id': first_file['id'],
+                        'filename': f"{len(saved_files_info)} files saved in {self.source_dir}",
+                        'size_bytes': sum(f['size_bytes'] for f in saved_files_info),
+                        'location': str(self.source_dir)
+                    }
+
+        # Handle a single FITS image
+        elif hasattr(result, 'writeto'): # Heuristic for FITS HDU objects
+            logger.info("Detected a single FITS-like object.")
+            num_rows = 1
+            data = "FITS image data" # Placeholder text
+            
+            if auto_save:
+                # Generate filename
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"astroquery_{service_name}_{query_type}_{timestamp}.fits"
+                full_path = self.source_dir / filename
+                
+                # Save to FITS
+                result.writeto(full_path, overwrite=True)
+                
+                # Register file
+                description = f"FITS image from astroquery service '{service_name}' using '{query_type}'"
+                serializable_kwargs = {k: str(v) for k, v in kwargs.items()}
+                save_result = self._register_file(
+                    filename=str(full_path),
+                    description=description,
+                    file_type='fits',
                     metadata={'service': service_name, 'query_type': query_type, 'query_params': serializable_kwargs}
                 )
 
