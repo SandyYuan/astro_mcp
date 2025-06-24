@@ -460,66 +460,83 @@ class DESIDataSource(BaseDataSource):
 
     def get_sparcl_ids_by_targetid(
         self,
-        targetids: Union[int, List[int]],
+        targetids: Union[str, List[str]] = None,
+        targetid: str = None,
         data_release: str = "DR1"
     ) -> Dict[str, Any]:
         """
-        Find SPARCL UUIDs for given DESI targetids by cross-referencing with SPARCL database.
+        Find SPARCL UUIDs for given DESI targetids by cross-referencing with SPARCL main table.
         
+        Uses Data Lab SQL queries for efficient targetid->UUID mapping.
+
         Args:
-            targetids: Single targetid or list of targetids to search for
-            data_release: DESI data release to search in (default: "DR1")
-            
+            targetids (Union[str, List[str]]): Single targetid or list of targetids as strings.
+            targetid (str): A single targetid, as a string (alternative to `targetids`).
+            data_release (str): DESI data release to search in (default: "DR1").
+
         Returns:
-            Dict containing the mapping of targetids to SPARCL UUIDs
+            Dict containing the mapping of targetids to SPARCL UUIDs.
         """
-        if not self.is_available:
+        if not self.datalab_available:
             return {
                 'status': 'error',
-                'error': 'SPARCL client not available. Please install with: pip install sparclclient'
+                'error': 'Data Lab access required for efficient SPARCL UUID lookup. Please install datalab.'
             }
-        
-        # Ensure targetids is a list
-        if isinstance(targetids, int):
-            targetids = [targetids]
-        
+            
+        # Consolidate inputs and ensure it's a list of strings
+        if targetid:
+            all_targetids_str = [targetid]
+        elif targetids:
+            all_targetids_str = targetids if isinstance(targetids, list) else [targetids]
+        else:
+            return {'status': 'error', 'error': 'Either targetid or targetids must be provided.'}
+
         try:
-            # Search SPARCL for spectra matching these targetids using simple approach
-            # Note: This searches all DESI data, then filters by targetid
-            found_spectra = self.sparcl_client.find()
+            # Use Data Lab SQL queries to efficiently lookup UUIDs from targetids
+            targetid_list_str = ','.join(f"'{tid}'" for tid in all_targetids_str)
+            query = f"""
+                SELECT sparcl_id, targetid, spectype, redshift, ra, dec
+                FROM sparcl.main 
+                WHERE targetid IN ({targetid_list_str})
+                AND data_release = 'DESI-{data_release}'
+            """
             
-            # Build mapping of targetid -> SPARCL info by filtering results
-            targetid_mapping = {}
-            for spectrum in found_spectra.records:
-                # Check if this spectrum's targetid matches our search list
-                if hasattr(spectrum, 'targetid') and spectrum.targetid in targetids:
-                    targetid = spectrum.targetid
-                    if targetid not in targetid_mapping:
-                        targetid_mapping[targetid] = []
-                    
-                    targetid_mapping[targetid].append({
-                        'sparcl_id': spectrum.sparcl_id,
-                        'spectype': getattr(spectrum, 'spectype', 'N/A'),
-                        'redshift': getattr(spectrum, 'redshift', None),
-                        'ra': getattr(spectrum, 'ra', None),
-                        'dec': getattr(spectrum, 'dec', None)
+            logger.info(f"Querying sparcl.main table for {len(all_targetids_str)} target IDs")
+            result_df = qc.query(sql=query, fmt='pandas')
+
+            found_mappings = []
+            missing_ids = set(all_targetids_str)
+
+            if not result_df.empty:
+                result_df['targetid'] = result_df['targetid'].astype(str)
+                for _, row in result_df.iterrows():
+                    tid = row['targetid']
+                    found_mappings.append({
+                        "targetid": tid,
+                        "sparcl_id": row['sparcl_id'],
+                        'spectype': row.get('spectype', 'N/A'),
+                        'redshift': row.get('redshift', None),
+                        'ra': row.get('ra', None),
+                        'dec': row.get('dec', None)
                     })
-            
-            # Track which targetids were not found
-            missing_targetids = [tid for tid in targetids if tid not in targetid_mapping]
-            
+                    missing_ids.discard(tid)
+
+            missing_targetids = sorted(list(missing_ids))
+            logger.info(f"Found {len(found_mappings)} SPARCL IDs for {len(all_targetids_str)} requested targetids.")
+
             return {
                 'status': 'success',
-                'total_requested': len(targetids),
-                'total_found': len(targetid_mapping),
+                'total_requested': len(all_targetids_str),
+                'total_found': len(found_mappings),
                 'missing_count': len(missing_targetids),
-                'mapping': targetid_mapping,
+                'data_release': data_release,
+                'found_mappings': found_mappings,
                 'missing_targetids': missing_targetids,
-                'data_release': data_release
+                'method': 'datalab_sql_query'
             }
-            
+
         except Exception as e:
-            logger.error(f"Error searching SPARCL for targetids: {str(e)}")
+            logger.error(f"Error searching SPARCL main table for targetids: {str(e)}")
             return {
                 'status': 'error',
                 'error': str(e)
@@ -527,51 +544,50 @@ class DESIDataSource(BaseDataSource):
 
     def get_spectrum_by_targetid(
         self,
-        targetid: int,
+        targetid: str,
         data_release: str = "DR1",
         format_type: str = "summary",
         auto_save: bool = None,
         output_file: str = None
     ) -> Dict[str, Any]:
         """
-        Retrieve spectrum data using DESI targetid by first finding the SPARCL UUID.
-        
+        Retrieves a spectrum from SPARCL by a DESI targetid.
+
+        This function acts as a bridge, first finding the SPARCL UUID for a given
+        targetid and then fetching the spectrum data.
+
         Args:
-            targetid: DESI target identifier
-            data_release: DESI data release to search in
-            format_type: 'summary' for metadata only, 'full' for complete arrays
+            targetid (str): The DESI targetid as a string to preserve precision.
+            data_release (str): The data release to search in (e.g., 'DR1').
+            format_type (str): The format for the returned spectrum data 
+                               ('summary' or 'full').
             auto_save: Automatically save spectrum data
             output_file: Custom filename for saved spectrum
             
         Returns:
             Dict containing spectrum data and file information
         """
-        # First, find the SPARCL UUID(s) for this targetid
-        uuid_result = self.get_sparcl_ids_by_targetid(targetid, data_release)
+        if not self.is_available:
+            return {
+                'status': 'error',
+                'error': 'SPARCL client not available. Please install with: pip install sparclclient'
+            }
         
-        if uuid_result['status'] != 'success':
-            return uuid_result
+        # Get the SPARCL ID for the given targetid
+        sparcl_id_result = self.get_sparcl_ids_by_targetid(
+            targetid=targetid, 
+            data_release=data_release
+        )
         
-        if targetid not in uuid_result['mapping']:
+        if sparcl_id_result.get('status') != 'success' or not sparcl_id_result.get('found_mappings'):
             return {
                 'status': 'error',
                 'error': f"No spectrum found for targetid {targetid} in {data_release}"
             }
-        
-        # Get the SPARCL entries for this targetid
-        sparcl_entries = uuid_result['mapping'][targetid]
-        
-        if len(sparcl_entries) == 0:
-            return {
-                'status': 'error',
-                'error': f"No spectrum found for targetid {targetid}"
-            }
-        
-        # If multiple spectra exist, use the first one and warn
-        if len(sparcl_entries) > 1:
-            logger.warning(f"Multiple spectra found for targetid {targetid}. Using the first one.")
-        
-        sparcl_id = sparcl_entries[0]['sparcl_id']
+
+        # Extract the first found SPARCL ID
+        sparcl_id = sparcl_id_result['found_mappings'][0]['sparcl_id']
+        logger.info(f"Found SPARCL ID {sparcl_id} for targetid {targetid}")
         
         # Now get the spectrum using the SPARCL UUID
         spectrum_result = self.get_spectrum_by_id(
@@ -586,7 +602,7 @@ class DESIDataSource(BaseDataSource):
             spectrum_result['cross_reference'] = {
                 'targetid': targetid,
                 'sparcl_id': sparcl_id,
-                'total_spectra_for_target': len(sparcl_entries)
+                'total_spectra_for_target': len(sparcl_id_result['found_mappings'])
             }
         
         return spectrum_result 

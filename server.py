@@ -418,12 +418,12 @@ async def handle_list_tools() -> list[types.Tool]:
                     },
                     "targetids": {
                         "type": "array",
-                        "items": {"type": "integer"},
-                        "description": "List of DESI target identifiers to look up"
+                        "items": {"type": "string"},
+                        "description": "List of DESI target identifiers to look up (as strings to preserve precision)"
                     },
                     "targetid": {
-                        "type": "integer",
-                        "description": "Single DESI target identifier (alternative to targetids array)"
+                        "type": "string",
+                        "description": "Single DESI target identifier (alternative to targetids array, as a string)"
                     },
                     "data_release": {
                         "type": "string",
@@ -446,8 +446,8 @@ async def handle_list_tools() -> list[types.Tool]:
                         "default": "desi"
                     },
                     "targetid": {
-                        "type": "integer",
-                        "description": "DESI target identifier from catalog search"
+                        "type": "string",
+                        "description": "DESI target identifier from catalog search, as a string to preserve precision for large numbers"
                     },
                     "data_release": {
                         "type": "string",
