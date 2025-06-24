@@ -228,13 +228,11 @@ DESI (Dark Energy Spectroscopic Instrument)
 Available Tools:
 ===============
 1. search_objects - Unified object search across surveys with tracer filtering
-2. get_spectrum_by_id - Retrieve detailed spectral data using SPARCL UUIDs
-3. get_sparcl_ids_by_targetid - Cross-reference DESI targetids to SPARCL UUIDs
-4. get_spectrum_by_targetid - Direct spectrum retrieval using DESI targetids
-5. preview_data - File structure analysis with loading examples
-6. list_files - Comprehensive file management
-7. file_statistics - Storage usage and organization info
-8. convert_to_fits - Convert data files to FITS format using astropy
+2. get_spectrum_by_targetid - Direct spectrum retrieval using DESI targetids
+3. preview_data - File structure analysis with loading examples
+4. list_files - Comprehensive file management
+5. file_statistics - Storage usage and organization info
+6. convert_to_fits - Convert data files to FITS format using astropy
 
 Architecture Features:
 =====================
@@ -368,69 +366,6 @@ async def handle_list_tools() -> list[types.Tool]:
                     }
                 },
                 "additionalProperties": True
-            }
-        ),
-        types.Tool(
-            name="get_spectrum_by_id",
-            description="Retrieve detailed spectral data using unique identifiers. Currently supports DESI spectra via SPARCL IDs. Returns either summary metadata or full spectral arrays (wavelength, flux, etc.). Automatically saves full spectra to JSON files.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "source": {
-                        "type": "string",
-                        "description": "Data source for spectrum retrieval (currently only 'desi' supported)",
-                        "enum": ["desi"],
-                        "default": "desi"
-                    },
-                    "spectrum_id": {
-                        "type": "string",
-                        "description": "Unique spectrum identifier (SPARCL UUID for DESI)"
-                    },
-                    "format": {
-                        "type": "string",
-                        "description": "Output format: 'summary' for metadata only, 'full' for complete spectral arrays",
-                        "enum": ["summary", "full"],
-                        "default": "summary"
-                    },
-                    "auto_save": {
-                        "type": "boolean",
-                        "description": "Automatically save spectrum data to file (default: True for full format, False for summary)"
-                    },
-                    "output_file": {
-                        "type": "string",
-                        "description": "Custom filename for saved spectrum (auto-generated if not specified)"
-                    }
-                },
-                "required": ["spectrum_id"]
-            }
-        ),
-        types.Tool(
-            name="get_sparcl_ids_by_targetid",
-            description="Cross-reference DESI targetids with SPARCL UUIDs. Takes one or more DESI targetids and returns the corresponding SPARCL spectrum identifiers, enabling seamless transition from catalog queries to spectrum retrieval.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "source": {
-                        "type": "string",
-                        "description": "Data source (currently only 'desi' supported)",
-                        "enum": ["desi"],
-                        "default": "desi"
-                    },
-                    "targetids": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "List of DESI target identifiers to look up (as strings to preserve precision)"
-                    },
-                    "targetid": {
-                        "type": "string",
-                        "description": "Single DESI target identifier (alternative to targetids array, as a string)"
-                    },
-                    "data_release": {
-                        "type": "string",
-                        "description": "DESI data release to search in",
-                        "default": "DR1"
-                    }
-                }
             }
         ),
         types.Tool(
@@ -680,169 +615,9 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
                     response += f"\nView file info: preview_data('{save_result['file_id']}')\n"
                 
                 if len(results_list) > 0:
-                    response += f"\n\nTo get detailed spectrum data, use get_spectrum_by_id with SPARCL IDs above."
+                    response += f"\n\nTo get detailed spectrum data, use get_spectrum_by_targetid with target IDs above."
                 
                 return [types.TextContent(type="text", text=response)]
-            
-            else:
-                return [types.TextContent(
-                    type="text",
-                    text=f"Error: Data source '{source}' not yet implemented. Currently supported: desi"
-                )]
-        
-        elif name == "get_spectrum_by_id":
-            # Route to appropriate data source
-            source = arguments.get("source", "desi")
-            
-            if source == "desi":
-                if not astro_server.desi.is_available:
-                    return [types.TextContent(
-                        type="text",
-                        text="Error: DESI SPARCL access not available. Please install with: pip install sparclclient"
-                    )]
-                
-                # Extract DESI-specific arguments
-                sparcl_id = arguments["spectrum_id"]
-                format_type = arguments.get("format", "summary")
-                auto_save = arguments.get("auto_save")
-                output_file = arguments.get("output_file")
-                
-                result = astro_server.desi.get_spectrum_by_id(
-                    sparcl_id=sparcl_id,
-                    format_type=format_type,
-                    auto_save=auto_save,
-                    output_file=output_file
-                )
-                
-                if result['status'] == 'error':
-                    return [types.TextContent(type="text", text=f"Error: {result['error']}")]
-                
-                if result['format'] == 'summary':
-                    metadata = result['metadata']
-                    summary = f"""
-Spectrum Summary for ID: {sparcl_id}
-=====================================
-Source: DESI (via SPARCL)
-Object Type: {metadata['object_type']}
-Redshift: {metadata['redshift']}
-Redshift Error: {metadata['redshift_err']}
-Redshift Warning: {metadata['redshift_warning']}
-Coordinates: ({metadata['ra']}, {metadata['dec']})
-Survey Program: {metadata['survey']}
-Data Release: {metadata['data_release']}
-Spec ID: {metadata['specid']}
-Target ID: {metadata['targetid']}
-
-To get full spectrum data (flux, wavelength arrays), use format='full'
-                    """
-                    return [types.TextContent(type="text", text=summary)]
-                
-                elif result['format'] == 'full':
-                    metadata = result['metadata']
-                    response_text = f"""
-Full Spectrum Data Retrieved for ID: {sparcl_id}
-===============================================
-
-SOURCE: DESI (via SPARCL)
-
-METADATA:
-Object Type: {metadata['object_type']}
-Redshift: {metadata['redshift']:.4f}
-Redshift Error: {metadata['redshift_err']}
-Redshift Warning: {metadata['redshift_warning']}
-Coordinates: RA={metadata['ra']:.4f}°, Dec={metadata['dec']:.4f}°
-Survey: {metadata['survey']}
-Data Release: {metadata['data_release']}
-
-SPECTRAL DATA INFO:
-Wavelength Range: {result['wavelength_range'][0]:.1f} - {result['wavelength_range'][1]:.1f} Angstrom
-Number of Pixels: {result['num_pixels']:,}
-Flux Units: 10^-17 erg/s/cm²/Å
-"""
-                    
-                    # Add auto-save info
-                    save_result = result.get('save_result')
-                    if save_result and save_result['status'] == 'success':
-                        response_text += f"""
-SPECTRUM AUTOMATICALLY SAVED:
-- File ID: {save_result['file_id']}
-- Filename: {save_result['filename']}
-- Size: {save_result['size_bytes']:,} bytes
-- Location: {save_result['filename']}
-
-View file info: preview_data('{save_result['file_id']}')
-"""
-                    
-                    return [types.TextContent(type="text", text=response_text)]
-            
-            else:
-                return [types.TextContent(
-                    type="text",
-                    text=f"Error: Data source '{source}' not yet implemented for spectral data. Currently supported: desi"
-                )]
-        
-        elif name == "get_sparcl_ids_by_targetid":
-            # Route to appropriate data source
-            source = arguments.get("source", "desi")
-            
-            if source == "desi":
-                if not astro_server.desi.is_available:
-                    return [types.TextContent(
-                        type="text",
-                        text="Error: DESI SPARCL access not available. Please install with: pip install sparclclient"
-                    )]
-                
-                # Extract targetids - handle both single targetid and array
-                targetids = arguments.get("targetids")
-                single_targetid = arguments.get("targetid")
-                
-                if targetids is None and single_targetid is None:
-                    return [types.TextContent(
-                        type="text",
-                        text="Error: Either 'targetid' or 'targetids' must be provided"
-                    )]
-                
-                if targetids is None:
-                    targetids = single_targetid
-                
-                data_release = arguments.get("data_release", "DR1")
-                
-                result = astro_server.desi.get_sparcl_ids_by_targetid(
-                    targetids=targetids,
-                    data_release=data_release
-                )
-                
-                if result['status'] == 'error':
-                    return [types.TextContent(type="text", text=f"Error: {result['error']}")]
-                
-                # Format the response
-                response_text = f"""
-DESI Target ID → SPARCL UUID Cross-Reference
-===========================================
-Data Release: {result['data_release']}
-Total Requested: {result['total_requested']}
-Total Found: {result['total_found']}
-Missing: {result['missing_count']}
-
-FOUND MAPPINGS:
-"""
-                
-                for targetid, sparcl_entries in result['mapping'].items():
-                    response_text += f"\nTarget ID: {targetid}\n"
-                    for i, entry in enumerate(sparcl_entries, 1):
-                        response_text += f"  {i}. SPARCL ID: {entry['sparcl_id']}\n"
-                        response_text += f"     Object Type: {entry['spectype']}\n"
-                        response_text += f"     Redshift: {entry['redshift']:.4f}\n"
-                        response_text += f"     Coordinates: RA={entry['ra']:.4f}°, Dec={entry['dec']:.4f}°\n"
-                
-                if result['missing_targetids']:
-                    response_text += f"\nMISSING TARGET IDs (no spectra found):\n"
-                    for missing_id in result['missing_targetids']:
-                        response_text += f"- {missing_id}\n"
-                
-                response_text += f"\nTo retrieve spectrum data, use get_spectrum_by_id with the SPARCL IDs above."
-                
-                return [types.TextContent(type="text", text=response_text)]
             
             else:
                 return [types.TextContent(

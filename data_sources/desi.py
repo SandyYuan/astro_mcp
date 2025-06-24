@@ -465,17 +465,18 @@ class DESIDataSource(BaseDataSource):
         data_release: str = "DR1"
     ) -> Dict[str, Any]:
         """
-        Find SPARCL UUIDs for given DESI targetids by cross-referencing with SPARCL main table.
-        
-        Uses Data Lab SQL queries for efficient targetid->UUID mapping.
+        An internal function to find SPARCL UUIDs for given DESI targetids.
+
+        This function uses the Data Lab SQL service to efficiently query the
+        `sparcl.main` table for `targetid` to `sparcl_id` mappings.
 
         Args:
-            targetids (Union[str, List[str]]): Single targetid or list of targetids as strings.
-            targetid (str): A single targetid, as a string (alternative to `targetids`).
-            data_release (str): DESI data release to search in (default: "DR1").
+            targetids: A list of targetids as strings.
+            targetid: A single targetid as a string (alternative to `targetids`).
+            data_release: The DESI data release to search within.
 
         Returns:
-            Dict containing the mapping of targetids to SPARCL UUIDs.
+            A dictionary containing the results of the cross-reference query.
         """
         if not self.datalab_available:
             return {
@@ -551,28 +552,28 @@ class DESIDataSource(BaseDataSource):
         output_file: str = None
     ) -> Dict[str, Any]:
         """
-        Retrieves a spectrum from SPARCL by a DESI targetid.
+        Retrieves a spectrum from SPARCL using a DESI targetid.
 
-        This function acts as a bridge, first finding the SPARCL UUID for a given
-        targetid and then fetching the spectrum data.
+        This function serves as a user-facing wrapper that first finds the
+        SPARCL UUID for a given `targetid` and then calls `get_spectrum_by_id`
+        to fetch the actual spectrum data.
 
         Args:
-            targetid (str): The DESI targetid as a string to preserve precision.
-            data_release (str): The data release to search in (e.g., 'DR1').
-            format_type (str): The format for the returned spectrum data 
-                               ('summary' or 'full').
-            auto_save: Automatically save spectrum data
-            output_file: Custom filename for saved spectrum
+            targetid: The DESI targetid (as a string to preserve precision).
+            data_release: The data release to search in (e.g., 'DR1').
+            format_type: The desired output format ('summary' or 'full').
+            auto_save: Whether to automatically save the spectrum data to a file.
+            output_file: An optional custom filename for the saved spectrum.
             
         Returns:
-            Dict containing spectrum data and file information
+            A dictionary containing the spectrum data and file information.
         """
         if not self.is_available:
             return {
                 'status': 'error',
                 'error': 'SPARCL client not available. Please install with: pip install sparclclient'
             }
-        
+
         # Get the SPARCL ID for the given targetid
         sparcl_id_result = self.get_sparcl_ids_by_targetid(
             targetid=targetid, 
